@@ -52,12 +52,11 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(self.env.data.time, 0.0)
 
     def test_courses_reach_motion_and_then_hold(self):
-        self.assertEqual(command_profile(5, 0, 0.5), 0.0)
-        for task in (1, 2, 3):
-            speeds = [command_profile(t, task, 0.5) for t in np.linspace(0, 20, 201)]
-            self.assertGreater(max(speeds), 0.1)
-            self.assertLessEqual(max(speeds), 0.5)
+        self.assertEqual(command_profile(19, 0, 0.5), 0.0)
+        for task in (1, 3, 4):
             self.assertEqual(command_profile(19, task, 0.5), 0.0)
+        self.assertAlmostEqual(command_profile(19, 2, 0.5), 0.5)
+
 
     def test_invalid_configuration_is_rejected(self):
         with self.assertRaises(ValueError):

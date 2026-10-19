@@ -10,7 +10,7 @@ from pathlib import Path
 import platform
 import sys
 import time
-
+from diablo_training.env import TASK_NAMES 
 import numpy as np
 
 from .resources import ROOT, fetch, source_path
@@ -309,7 +309,7 @@ def evaluate(args):
 
             viewer = mujoco.viewer.launch_passive(env.model, env.data)
         with (out / "trace.jsonl").open("x") as log:
-            for task in range(4):
+            for task in range(env.num_tasks):
                 obs, _ = env.reset(seed=args.seed + task, options={"task": task})
                 errors, stopped_speeds = [], []
                 terminated = truncated = cancelled = False
@@ -339,6 +339,7 @@ def evaluate(args):
                 reports.append(
                     {
                         "task": task,
+                        "task_name": TASK_NAMES[task],
                         "sim_seconds": info["sim_seconds"],
                         "terminated": terminated,
                         "time_limit_reached": truncated,

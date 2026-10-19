@@ -39,16 +39,27 @@ class Config:
         if self.action_mode not in ("position_velocity", "torque"):
             raise ValueError("Unknown action_mode")
 
+### set task table
+TASK_NAMES = (
+    "stand_balance",
+    "single_start_stop",
+    "cruise_balance",
+    "drive_accel_decel",
+    "repeat_start_stop",
+)
+
+TASK_PROFILES = (
+    ([0, 20], [0, 0]),
+    ([0, 2, 4, 8, 10, 20], [0, 0, 1, 1, 0, 0]),
+    ([0, 2, 4, 20], [0, 0, 1, 1]),
+    ([0, 2, 4, 6, 9, 12, 20], [0, 0, 0.4, 1, 1, 0.4, 0.4]),
+    ([0, 2, 4, 6, 8, 10, 12, 14, 16, 20],
+     [0, 0, 1, 1, 0, 0, 1, 1, 0, 0]),
+)
+
 
 def command_profile(t, task, speed):
-    """Return commanded forward m/s; all four tasks include a final hold."""
-    profiles = (
-        ([0, 20], [0, 0]),
-        ([0, 2, 4, 8, 10, 20], [0, 0, 1, 1, 0, 0]),
-        ([0, 2, 4, 7, 9, 12, 14, 16, 20], [0, 0, 0.4, 0.4, 1, 1, 0.3, 0, 0]),
-        ([0, 2, 4, 6, 8, 10, 12, 14, 16, 20], [0, 0, 1, 1, 0, 0, 1, 1, 0, 0]),
-    )
-    times, values = profiles[task]
+    times, values = TASK_PROFILES[task]
     return float(np.interp(t, times, values) * speed)
 
 
@@ -58,6 +69,7 @@ class DiabloEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 25}
 
     def __init__(self, config=None, render_mode=None):
+        self.num_tasks = len(TASK_PROFILES)
         self.config = config or Config()
         self.render_mode = render_mode
         if render_mode not in (None, "rgb_array"):
@@ -144,9 +156,9 @@ class DiabloEnv(gym.Env):
         super().reset(seed=seed)
         mujoco.mj_resetData(self.model, self.data)
         self.steps = 0
-        self.task = int((options or {}).get("task", self.np_random.integers(0, 4)))
-        if self.task not in range(4):
-            raise ValueError("task must be 0..3")
+        self.task = int((options or {}).get("task", self.np_random.integers(0, self.num_tasks)))
+        if self.task not in range(self.num_tasks):
+            raise ValueError(f"task must be 0..{self.num_tasks - 1}")
         self.speed = float(
             (options or {}).get(
                 "speed",
