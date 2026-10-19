@@ -14,6 +14,8 @@
 
 本项目的腿部PD/轮部速度控制及径向支撑前馈依据公开上游公式编写；模型来源、假设和变化见`docs/model-interface.md`。
 
+官方Webots机构来源：`https://github.com/DDTRobot/diablo-sim-env.git`，固定提交`3c9abbcaeb93911932b9c14777c4e75cc8c1470e`。同样由`diablo fetch`保留完整上游内容，不复制发布其PROTO或网格；上游资产许可不由本仓库BSD声明覆盖。机构与电机参考论文：Liu等，DIABLO: A 6-DoF Wheeled Bipedal Robot Composed Entirely of Direct-Drive Joints，arXiv:2407.21500。
+
 ## 软件依赖
 
 - MuJoCo：Google DeepMind，Apache-2.0。

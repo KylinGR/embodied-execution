@@ -1,0 +1,5 @@
+{
+  "environment_class": "custom_task:MyEnv",
+  "environment": {"max_speed": 0.2},
+  "ppo": {"n_steps": 128, "policy_kwargs": {"net_arch": [64, 64]}}
+}

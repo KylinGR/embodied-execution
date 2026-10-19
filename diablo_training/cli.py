@@ -43,6 +43,7 @@ def doctor(args):
     from stable_baselines3.common.env_checker import check_env
     from .env import DiabloEnv
     from .model import metadata
+    from .validation import validate_model
 
     env = DiabloEnv()
     try:
@@ -55,6 +56,7 @@ def doctor(args):
             "observation_shape": list(env.observation_space.shape),
             "action_shape": list(env.action_space.shape),
             "gymnasium_check": "passed",
+            "mechanics": validate_model(),
             "training_verified": False,
         }
         if args.render:
@@ -113,16 +115,37 @@ def train(args):
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import CheckpointCallback
     from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
-    from .env import Config, DiabloEnv
+    from .env import Config
     from .model import metadata
+    from .contract import (
+        environment_class,
+        policy_contract,
+        require_compatible,
+        require_checkpoint,
+    )
 
     torch.set_num_threads(1)
     out = fresh_directory(args.output, "train")
+    settings = {
+        "n_steps": 128,
+        "batch_size": 64,
+        "n_epochs": 4,
+        "learning_rate": 3e-4,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "ent_coef": 0.01,
+        "policy_kwargs": {"net_arch": [128, 128]},
+    }
+    task_class = "diablo_training.env:DiabloEnv"
     if args.resume:
         previous = json.loads(
             configuration_path(Path(args.resume).resolve()).read_text()
         )
         config = Config(**previous["environment"])
+        task_class = previous.get("environment_class", task_class)
+        settings = previous["ppo"]
+        if args.config:
+            raise ValueError("Resume inherits its saved config; do not supply --config")
         if (args.max_speed is not None and args.max_speed != config.max_speed) or (
             args.noise and not config.observation_noise
         ):
@@ -130,27 +153,37 @@ def train(args):
                 "Resume keeps the saved environment; start a new experiment to change it"
             )
     else:
-        config = Config(
-            max_speed=0.5 if args.max_speed is None else args.max_speed,
-            observation_noise=args.noise,
-        )
+        supplied = json.loads(args.config.read_text()) if args.config else {}
+        if set(supplied) - {"environment", "ppo", "environment_class"}:
+            raise ValueError("Config keys: environment, ppo, environment_class")
+        parameters = supplied.get("environment", {}).copy()
+        if args.max_speed is not None:
+            parameters["max_speed"] = args.max_speed
+        if args.noise:
+            parameters["observation_noise"] = True
+        config = Config(**parameters)
+        settings.update(supplied.get("ppo", {}))
+        if set(settings) & {
+            "env",
+            "policy",
+            "device",
+            "seed",
+            "verbose",
+            "tensorboard_log",
+        }:
+            raise ValueError("Use CLI options for environment, seed and device")
+        task_class = supplied.get("environment_class", task_class)
+    cls = environment_class(task_class)
     env = VecMonitor(
-        DummyVecEnv([lambda: DiabloEnv(config) for _ in range(args.n_envs)]),
+        DummyVecEnv([lambda: cls(config) for _ in range(args.n_envs)]),
         filename=str(out / "episodes.csv"),
     )
     model = None
     began = time.monotonic()
     try:
-        settings = {
-            "n_steps": 128,
-            "batch_size": 64,
-            "n_epochs": 4,
-            "learning_rate": 3e-4,
-            "gamma": 0.99,
-            "gae_lambda": 0.95,
-            "ent_coef": 0.01,
-            "policy_kwargs": {"net_arch": [128, 128]},
-        }
+        contract = policy_contract(env.venv.envs[0])
+        if args.resume:
+            require_compatible(previous, env.venv.envs[0])
         model = (
             PPO.load(
                 args.resume,
@@ -169,19 +202,24 @@ def train(args):
                 tensorboard_log=str(out / "tensorboard"),
             )
         )
+        if args.resume:
+            require_checkpoint(model, previous)
+        model.diablo_contract_sha256 = contract["sha256"]
         before = parameter_digest(model.policy)
         starting_timesteps = model.num_timesteps
         _, lock = source_path()
         resolved = {
             "environment": asdict(config),
+            "environment_class": task_class,
+            "contract": contract,
             "ppo": settings,
             "model": metadata(env.venv.envs[0].model),
             "upstream_commit": lock["commit"],
             "versions": versions(),
             "requested_timesteps": args.steps,
             "n_envs": args.n_envs,
-            "seed": args.seed,
-            "device": args.device,
+            "seed": model.seed,
+            "device": str(model.device),
             "resume": None if args.resume is None else str(Path(args.resume).resolve()),
             "parameter_sha256_before": before,
         }
@@ -237,18 +275,29 @@ def configuration_path(path):
 def load_policy(path):
     from stable_baselines3 import PPO
     from .env import Config
+    from .contract import environment_class, require_compatible, require_checkpoint
 
     path = Path(path).resolve()
     resolved = json.loads(configuration_path(path).read_text())
-    return PPO.load(path, device="cpu"), Config(**resolved["environment"]), resolved
+    config = Config(**resolved["environment"])
+    env = environment_class(
+        resolved.get("environment_class", "diablo_training.env:DiabloEnv")
+    )(config)
+    try:
+        require_compatible(resolved, env)
+    finally:
+        env.close()
+    policy = PPO.load(path, device="cpu")
+    require_checkpoint(policy, resolved)
+    return policy, config, resolved
 
 
 def evaluate(args):
     import imageio.v2 as imageio
-    from .env import DiabloEnv
+    from .contract import environment_class
 
     model, config, resolved = load_policy(args.model)
-    env = DiabloEnv(config)
+    env = environment_class(resolved["environment_class"])(config)
     out = fresh_directory(args.output, "evaluate")
     observations, actions, reports = [], [], []
     writer = imageio.get_writer(out / "rollout.mp4", fps=25) if args.video else None
@@ -272,7 +321,10 @@ def evaluate(args):
                     obs, reward, terminated, truncated, info = env.step(action)
                     log.write(json.dumps({**info, "reward": reward}) + "\n")
                     errors.append(info["speed_error_mps"])
-                    if info["sim_seconds"] >= config.episode_seconds - 0.5:
+                    if (
+                        info["sim_seconds"] >= config.episode_seconds - 0.5
+                        and np.max(np.abs(info["command"][:2])) < 0.01
+                    ):
                         stopped_speeds.append(abs(info["forward_mps"]))
                     if writer is not None and i % 4 == 0:
                         writer.append_data(env.render())
@@ -311,6 +363,7 @@ def evaluate(args):
             "wall_seconds": time.monotonic() - began,
             "integrated_sim_seconds": sum(r["sim_seconds"] for r in reports),
             "model": resolved["model"],
+            "contract": resolved["contract"],
             "note": "Each task is a separate first episode; failures are retained without retry.",
         }
         write_json(out / "result.json", result)
@@ -327,7 +380,7 @@ def evaluate(args):
 def export(args):
     import torch
     import onnxruntime as ort
-    from .env import DiabloEnv
+    from .contract import environment_class
 
     model, config, resolved = load_policy(args.model)
     out = fresh_directory(args.output, "export")
@@ -344,7 +397,7 @@ def export(args):
     if args.observations:
         samples = np.load(args.observations, allow_pickle=False)["observations"][:256]
     else:
-        env = DiabloEnv(config)
+        env = environment_class(resolved["environment_class"])(config)
         frames = []
         try:
             obs, _ = env.reset(seed=0)
@@ -395,6 +448,8 @@ def export(args):
         "control_dt_s": 0.01,
         "model": resolved["model"],
         "environment": resolved["environment"],
+        "policy_contract": resolved["contract"],
+        "environment_class": resolved["environment_class"],
         "interface_document": "docs/model-interface.md",
         "simulation_only": True,
         "hardware_authorized": False,
@@ -429,6 +484,11 @@ def main():
             command.add_argument("--noise", action="store_true")
             command.add_argument("--device", default="cpu")
             command.add_argument("--resume", type=Path)
+            command.add_argument(
+                "--config",
+                type=Path,
+                help="JSON environment / PPO / environment_class settings",
+            )
     check = commands.add_parser("evaluate", aliases=["play"])
     check.add_argument("--model", type=Path, required=True)
     check.add_argument("--output", type=Path)

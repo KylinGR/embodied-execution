@@ -7,7 +7,18 @@ from gymnasium import spaces
 import mujoco
 import numpy as np
 
-from .model import CONTROL_DT, DEFAULT_Q, JOINTS, LEGS, PHYSICS_DT, WHEELS, make_model
+from .control import decode_action
+from .model import (
+    CONTROL_DT,
+    DEFAULT_Q,
+    JOINTS,
+    LEGS,
+    OBSERVATION_SIGNS,
+    PHYSICS_DT,
+    closure_errors,
+    make_model,
+    set_pose,
+)
 
 
 @dataclass
@@ -15,12 +26,18 @@ class Config:
     episode_seconds: float = 20.0
     max_speed: float = 0.5
     observation_noise: bool = False
+    action_mode: str = "position_velocity"
 
     def __post_init__(self):
-        if self.episode_seconds < 18 or not 0.05 <= self.max_speed <= 0.5:
+        if (
+            not np.isfinite([self.episode_seconds, self.max_speed]).all()
+            or min(self.episode_seconds, self.max_speed) <= 0
+        ):
             raise ValueError(
-                "Foundation episodes must be >=18 s and speed must be 0.05..0.5 m/s"
+                "Episode duration and command speed must be finite and positive"
             )
+        if self.action_mode not in ("position_velocity", "torque"):
+            raise ValueError("Unknown action_mode")
 
 
 def command_profile(t, task, speed):
@@ -43,6 +60,8 @@ class DiabloEnv(gym.Env):
     def __init__(self, config=None, render_mode=None):
         self.config = config or Config()
         self.render_mode = render_mode
+        if render_mode not in (None, "rgb_array"):
+            raise ValueError("render_mode must be None or rgb_array")
         self.model = make_model()
         self.data = mujoco.MjData(self.model)
         joints = [self.model.joint(n).id for n in JOINTS]
@@ -65,18 +84,21 @@ class DiabloEnv(gym.Env):
         self.speed = 0.2
         self.reference_height = 0.2
         self.stop_origin = None
+        self.command = np.zeros(3)
+        self._needs_reset, self._closed, self._faulted = True, False, False
 
     def _body_velocity(self):
         velocity = np.zeros(6)
         mujoco.mj_objectVelocity(
-            self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, self.base_id, velocity, 1
+            self.model, self.data, mujoco.mjtObj.mjOBJ_XBODY, self.base_id, velocity, 0
         )
-        return velocity[3:]
+        return self.data.xmat[self.base_id].reshape(3, 3).T @ velocity[3:]
 
-    def _command(self):
+    def get_command(self, sim_seconds):
+        """Override for custom tasks; return body vx m/s, yaw rad/s, height m."""
         return np.array(
             [
-                command_profile(self.steps * CONTROL_DT, self.task, self.speed),
+                command_profile(sim_seconds, self.task, self.speed),
                 0.0,
                 self.reference_height,
             ]
@@ -85,20 +107,27 @@ class DiabloEnv(gym.Env):
     def _frame(self):
         gyro = self.data.sensor("gyro").data.copy()
         q = self.data.qpos[self.qi[LEGS]] - DEFAULT_Q[LEGS]
-        dq = self.data.qvel[self.vi].copy()
+        dq = self.data.qvel[self.vi] * OBSERVATION_SIGNS
         if self.config.observation_noise:
             gyro += self.np_random.normal(0, 0.01, 3)
             dq += self.np_random.normal(0, 0.02, 6)
-        return np.concatenate(
+        frame = np.concatenate(
             (
                 gyro * 0.25,
                 self.gravity_estimate,
-                self._command() * [10.0, 0.25, 5.0],
+                self.command * [10.0, 0.25, 5.0],
                 q,
                 dq * 0.05,
                 self.previous_action,
             )
         ).astype(np.float32)
+        if not np.isfinite(frame).all():
+            self._fault("Nonfinite sensor observation")
+        return np.clip(frame, -100, 100)
+
+    def _fault(self, message):
+        self._faulted = True
+        raise FloatingPointError(message)
 
     def _update_gravity(self):
         gyro = self.data.sensor("gyro").data
@@ -110,16 +139,27 @@ class DiabloEnv(gym.Env):
         self.gravity_estimate /= max(np.linalg.norm(self.gravity_estimate), 1e-8)
 
     def reset(self, *, seed=None, options=None):
+        if self._closed or self._faulted:
+            raise RuntimeError("Closed or faulted environment must be recreated")
         super().reset(seed=seed)
         mujoco.mj_resetData(self.model, self.data)
         self.steps = 0
         self.task = int((options or {}).get("task", self.np_random.integers(0, 4)))
         if self.task not in range(4):
             raise ValueError("task must be 0..3")
-        self.speed = float(self.np_random.uniform(0.05, self.config.max_speed))
+        self.speed = float(
+            (options or {}).get(
+                "speed",
+                self.np_random.uniform(
+                    0.1 * self.config.max_speed, self.config.max_speed
+                ),
+            )
+        )
+        if not np.isfinite(self.speed) or abs(self.speed) > self.config.max_speed:
+            raise ValueError("Requested speed is outside the configured command range")
         self.data.qpos[2] = 0.4
         self.data.qpos[3:7] = [1, 0, 0, 0]
-        self.data.qpos[self.qi] = DEFAULT_Q
+        set_pose(self.model, self.data, DEFAULT_Q)
         mujoco.mj_forward(self.model, self.data)
         wheel_geoms = [
             i
@@ -130,14 +170,25 @@ class DiabloEnv(gym.Env):
         ]
         bottoms = []
         for i in wheel_geoms:
-            mesh = self.model.geom_dataid[i]
-            first, count = self.model.mesh_vertadr[mesh], self.model.mesh_vertnum[mesh]
-            vertices = self.model.mesh_vert[first : first + count]
-            world = (
-                vertices @ self.data.geom_xmat[i].reshape(3, 3).T
-                + self.data.geom_xpos[i]
-            )
-            bottoms.append(float(world[:, 2].min()))
+            if self.model.geom_type[i] == mujoco.mjtGeom.mjGEOM_CYLINDER:
+                axis = self.data.geom_xmat[i].reshape(3, 3)[:, 2]
+                radius, halfwidth = self.model.geom_size[i, :2]
+                support = radius * np.sqrt(
+                    max(0.0, 1 - axis[2] ** 2)
+                ) + halfwidth * abs(axis[2])
+                bottoms.append(float(self.data.geom_xpos[i, 2] - support))
+            else:
+                mesh = self.model.geom_dataid[i]
+                first, count = (
+                    self.model.mesh_vertadr[mesh],
+                    self.model.mesh_vertnum[mesh],
+                )
+                vertices = self.model.mesh_vert[first : first + count]
+                world = (
+                    vertices @ self.data.geom_xmat[i].reshape(3, 3).T
+                    + self.data.geom_xpos[i]
+                )
+                bottoms.append(float(world[:, 2].min()))
         bottom = min(bottoms)
         self.data.qpos[2] += 0.005 - bottom
         mujoco.mj_forward(self.model, self.data)
@@ -145,29 +196,30 @@ class DiabloEnv(gym.Env):
         self.gravity_estimate[:] = [0, 0, -1]
         self.previous_action[:] = 0
         self.stop_origin = None
+        self.command = np.asarray(self.get_command(0.0), dtype=float)
+        if self.command.shape != (3,) or not np.isfinite(self.command).all():
+            self._fault("Custom task command must be finite [vx, yaw_rate, height]")
+        self._needs_reset = False
         self.history[:] = self._frame()
         return self.history.flatten().copy(), {"task": self.task}
 
     def step(self, action):
+        if self._needs_reset or self._closed or self._faulted:
+            raise RuntimeError(
+                "Call reset before stepping; recreate closed/faulted environments"
+            )
         action = np.asarray(action, dtype=float)
         if action.shape != (6,) or not np.isfinite(action).all():
             raise ValueError("Action must contain six finite values")
         action = np.clip(action, -1, 1)
+        command = self.command.copy()
         saturated = 0
         max_torque = 0.0
         for _ in range(round(CONTROL_DT / PHYSICS_DT)):
             q, dq = self.data.qpos[self.qi], self.data.qvel[self.vi]
-            torque = np.array([15, 18, 0, 15, 18, 0]) * (DEFAULT_Q + action * 0.5 - q)
-            torque -= np.array([0.3, 0.2, 0.3, 0.3, 0.2, 0.3]) * dq
-            torque[WHEELS] += 0.3 * action[WHEELS] * 10
-            # Equal-length two-link Jacobian: tau_knee = F * d(length)/dq.
-            # Same 60 N radial feedforward as the upstream training example.
-            torque[[1, 4]] -= 60 * 0.14 * np.sin((q[[1, 4]] - np.pi + 0.26866) / 2)
-            # Conservative motor envelope from URDF limits; it is an assumption.
-            lower = -27 * np.clip(1 + dq / 26, 0, 1)
-            upper = 27 * np.clip(1 - dq / 26, 0, 1)
-            saturated += int(np.count_nonzero((torque < lower) | (torque > upper)))
-            self.data.ctrl[:] = np.clip(torque, lower, upper)
+            requested, applied = decode_action(action, q, dq, self.config.action_mode)
+            saturated += int(np.count_nonzero(np.abs(requested - applied) > 1e-9))
+            self.data.ctrl[:] = applied
             max_torque = max(max_torque, float(np.max(np.abs(self.data.ctrl))))
             mujoco.mj_step(self.model, self.data)
             for warning in (
@@ -176,18 +228,19 @@ class DiabloEnv(gym.Env):
                 mujoco.mjtWarning.mjWARN_BADQACC,
             ):
                 if self.data.warning[warning].number:
-                    raise FloatingPointError(
+                    self._fault(
                         "MuJoCo numerical warning; automatic state recovery is not accepted"
                     )
             self._update_gravity()
         self.steps += 1
         finite = np.isfinite(self.data.qpos).all() and np.isfinite(self.data.qvel).all()
         if not finite:
-            raise FloatingPointError(
-                "Nonfinite MuJoCo state; preserve this run and diagnose"
-            )
+            self._fault("Nonfinite MuJoCo state; preserve this run and diagnose")
+        mujoco.mj_forward(self.model, self.data)
+        loop_error = max(closure_errors(self.model, self.data))
+        if loop_error > 0.005:
+            self._fault(f"Parallelogram closure error {loop_error:.6f} m exceeds 5 mm")
         velocity = self._body_velocity()
-        command = self._command()
         rotation = self.data.xmat[self.base_id].reshape(3, 3)
         upright = float(rotation[2, 2])
         body_contact = False
@@ -200,21 +253,27 @@ class DiabloEnv(gym.Env):
         terminated = bool(upright < 0.5 or body_contact)
         truncated = self.steps * CONTROL_DT >= self.config.episode_seconds
         error = float(velocity[0] - command[0])
-        height_error = float(self.data.xpos[self.base_id, 2] - self.reference_height)
-        reward = (
-            1.0
-            + 2 * np.exp(-(error**2) / 0.04)
-            + upright
-            - 0.5 * velocity[1] ** 2
-            - 5 * height_error**2
-            - 0.25 * float(self.data.sensor("gyro").data[2] ** 2)
-            - 0.02 * np.square(action - self.previous_action).sum()
-            - 0.0002 * np.square(self.data.ctrl).sum()
-            - (5.0 if terminated else 0.0)
+        height_error = float(self.data.xpos[self.base_id, 2] - command[2])
+        transition = {
+            "velocity": velocity.copy(),
+            "command": command,
+            "upright": upright,
+            "height_error": height_error,
+            "torque": self.data.ctrl.copy(),
+            "gyro": self.data.sensor("gyro").data.copy(),
+            "terminated": terminated,
+        }
+        reward = float(
+            self.reward_for_transition(transition, action, self.previous_action)
         )
-        if abs(command[0]) < 0.01:
-            reward -= 2 * float(np.square(velocity[:2]).sum())
+        if not np.isfinite(reward):
+            self._fault("Custom reward returned a nonfinite value")
         self.previous_action[:] = action
+        self.command = np.asarray(
+            self.get_command(self.steps * CONTROL_DT), dtype=float
+        )
+        if self.command.shape != (3,) or not np.isfinite(self.command).all():
+            self._fault("Custom task command must be finite [vx, yaw_rate, height]")
         self.history[:-1] = self.history[1:]
         self.history[-1] = self._frame()
         info = {
@@ -222,20 +281,45 @@ class DiabloEnv(gym.Env):
             "sim_seconds": self.steps * CONTROL_DT,
             "forward_mps": float(velocity[0]),
             "command_mps": float(command[0]),
+            "command": command.tolist(),
+            "next_command_mps": float(self.command[0]),
             "speed_error_mps": abs(error),
             "upright": upright,
             "body_ground_contact": bool(body_contact),
             "max_torque_nm": max_torque,
             "saturation_fraction": saturated / 30.0,
+            "closure_error_m": loop_error,
             "position_xy_m": self.data.xpos[self.base_id, :2].tolist(),
         }
-        if self.steps * CONTROL_DT >= 16:
+        if self.steps * CONTROL_DT >= 16 and np.max(np.abs(command[:2])) < 0.01:
             if self.stop_origin is None:
                 self.stop_origin = self.data.xpos[self.base_id, :2].copy()
             info["hold_drift_m"] = float(
                 np.linalg.norm(self.data.xpos[self.base_id, :2] - self.stop_origin)
             )
-        return self.history.flatten().copy(), float(reward), terminated, truncated, info
+        else:
+            self.stop_origin = None
+        self._needs_reset = terminated or truncated
+        return self.history.flatten().copy(), reward, terminated, truncated, info
+
+    def reward_for_transition(self, transition, action, previous_action):
+        """Example reward only. Override without changing the physical environment."""
+        velocity, command = transition["velocity"], transition["command"]
+        error = float(velocity[0] - command[0])
+        reward = (
+            1.0
+            + 2 * np.exp(-(error**2) / 0.04)
+            + transition["upright"]
+            - 0.5 * velocity[1] ** 2
+            - 5 * transition["height_error"] ** 2
+            - 0.25 * float(transition["gyro"][2] ** 2)
+            - 0.02 * np.square(action - previous_action).sum()
+            - 0.0002 * np.square(transition["torque"]).sum()
+            - (5.0 if transition["terminated"] else 0.0)
+        )
+        if abs(command[0]) < 0.01:
+            reward -= 2 * float(np.square(velocity[:2]).sum())
+        return float(reward)
 
     def render(self):
         if self.renderer is None:
@@ -247,6 +331,7 @@ class DiabloEnv(gym.Env):
         return self.renderer.render()
 
     def close(self):
+        self._closed = True
         if self.renderer is not None:
             self.renderer.close()
             self.renderer = None

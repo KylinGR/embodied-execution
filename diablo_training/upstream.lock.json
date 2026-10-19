@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/DDTRobot/Col_DIABLO_Issac_RL.git",
+  "commit": "590085a027fc9e20b1d7e976714cd195488b96b6",
+  "directory": "third_party/diablo_source",
+  "robot": "resources/robots/diablo/urdf/diablo.urdf",
+  "mechanism": {
+    "repository": "https://github.com/DDTRobot/diablo-sim-env.git",
+    "commit": "3c9abbcaeb93911932b9c14777c4e75cc8c1470e",
+    "directory": "third_party/diablo_mechanism",
+    "file": "diablo_A1/protos/DiabloOriginal.proto"
+  },
+  "model_scope": "CAD inertias and meshes, serial hip/knee drives and explicit parallelogram closure from the published Webots model; not hardware calibrated",
+  "license_note": "Source files declare BSD-3-Clause and setup.py names BSD-3-Clause. No top-level license was present at this commit; model asset terms must be confirmed with the rights holder before redistribution. Assets are fetched from the source repository, not bundled here."
+}

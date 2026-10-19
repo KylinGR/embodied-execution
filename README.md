@@ -1,18 +1,16 @@
 # 具身执行 · Embodied Execution
 
-面向团队的 **DIABLO 双轮足机器人 MuJoCo 运动训练入门项目**。
-
-本仓库开发了 MuJoCo 模型适配、Gymnasium 环境、基础运动课程、PPO 训练、回放和策略导出。PPO 复用 Stable-Baselines3，无需 Isaac Gym、ROS 或机器人硬件。默认使用 CPU；不连接实机电机。
+面向团队的 **DIABLO 双轮足机器人 MuJoCo 运动训练环境**。提供公开机构模型适配、Gymnasium环境、训练/续训、评估、可视化和ONNX/TorchScript导出。默认CPU，无需Isaac Gym、ROS或机器人硬件。你可以自行定义任务、奖励和训练策略。
 
 ![MuJoCo中的DIABLO模型初始姿态](docs/images/diablo-mujoco.png)
 
-图为物理模型初始姿态，不是已训练策略的稳定运动演示。
+图为物理模型初始姿态，不是已训练策略演示。
 
-**模型边界：**第一版使用厂家推荐强化学习示例中的六自由度等效串联 URDF，保留其几何、质量和惯量。它不是 DIABLO 实机并联腿闭环及执行器的标定模型，训练结果不代表实机能力。本仓库不附带成熟的预训练运动策略。
+v0.2已按公开CAD、官方Webots和论文校核串联髋膝电机、平行四边形闭环、电机轴向及轮子前进方向；修正机体速度坐标。**这是公开参考仿真，不是已标定实机**：质量/轮径与论文存在版本差异，未获得你的硬件零位及驱动参数。没有附带成熟运动策略。
 
-## 从这里开始
+## 开始训练
 
-需要 Linux、Git、Python **3.11 或 3.12**。基础训练不要求 NVIDIA GPU。完整操作和报错处理见[新手教程](docs/tutorial.md)。
+需要Linux、Git和Python **3.11或3.12**。不要求NVIDIA GPU；完整步骤见[中文教程](docs/tutorial.md)。
 
 ```bash
 git clone https://github.com/KylinGR/embodied-execution.git
@@ -20,56 +18,80 @@ cd embodied-execution
 bash scripts/setup.sh
 source .venv/bin/activate
 
-# 实际创建 MuJoCo 环境并检查接口
+# 机构、驱动方向、传感器及Gymnasium接口校核
 diablo doctor
-diablo smoke --steps 200
 
-# 先验证训练链；2,048 步不够证明已经学会运动
+# 首轮短训练，只确认工具链
 diablo train --steps 2048 --n-envs 4 --output runs/first-train
 
-# 不录视频时不需要图形环境；发生跌倒会保留结果并返回退出码 2
+# 每个任务运行首个回合；跌倒保留证据，退出码2
 diablo evaluate --model runs/first-train/policy.zip --output runs/first-evaluate
 
-# 导出并实际比较 ONNX、TorchScript 和原策略的动作
-diablo export --model runs/first-train/policy.zip --output runs/first-export
+# 用实际回放观测验证导出的动作
+diablo export --model runs/first-train/policy.zip \
+  --observations runs/first-evaluate/trajectory.npz --output runs/first-export
 ```
 
-每次实验使用新的输出目录，已存在时拒绝覆盖。默认课程为：平衡、单次起停、行驶变速、重复起停；最高指令速度 0.5 m/s，末段保持。当前不包含复杂地形、转向课程、跳跃或实机部署。
+每次输出目录必须是新的。默认平地任务为平衡、单次起停、变速、重复起停。当前不提供越野、跳跃、爬行课程或硬件部署；这些需要另写任务和对应评测。
+
+## 自己定训练策略
+
+```bash
+# 直接力矩动作及PPO参数由JSON配置，不依赖默认PD动作
+diablo train --config examples/torque.json --steps 2048 --output runs/torque-train
+
+# 改任务和奖励：继承环境，物理、传感器、时序复用
+export PYTHONPATH="$PWD/examples${PYTHONPATH:+:$PYTHONPATH}"
+diablo train --config examples/custom.json --steps 2048 --output runs/custom-train
+```
+
+[自定义教程](docs/tutorial.md#自定义任务奖励和算法)说明如何替换奖励、指令、网络及算法。基础Gymnasium环境可直接交给其他RL算法。模型/控制/观测指纹会拒绝不兼容检查点，包括旧版v0.1。
 
 ## 教程与资源
 
-- [安装、首轮训练、回放、续训、看曲线](docs/tutorial.md)
-- [模型、观测、动作、时钟和导出契约](docs/model-interface.md)
-- [官方资源及上游来源](docs/resources.md)
-- [许可证和资源再分发边界](THIRD_PARTY.md)
+- [安装、训练、回放、续训、看曲线、自定义与排错](docs/tutorial.md)
+- [模型来源、机构、电机映射、输入输出和时序](docs/model-interface.md)
+- [官方资源、开源策略与SDK边界](docs/resources.md)
+- [许可证与资源再分发边界](THIRD_PARTY.md)
 
-## 本地验证
+## 实际验证
 
-2026-10-19，Linux / Python 3.11.16 / MuJoCo 3.8.1 / Gymnasium 1.4.0 / SB3 2.9.0 / PyTorch 2.11.0，CPU策略与CPU物理：
+可重复的完整检查命令：
+
+```bash
+bash scripts/check_training.sh
+```
+
+它创建新的`runs/check-*`，集中完成测试、机构检查、随机动作、训练、续训、四任务首回合评估、实际轨迹导出。评估中的跌倒如实记录，不作为环境安装故障或运动成功。GitHub Actions还检查全新依赖安装和离开源码目录后的wheel安装。
+
+2026-10-19，Linux / Python3.11.16 / MuJoCo3.8.1 / Gymnasium1.4.0 / SB3 2.9.0 / PyTorch2.11.0，CPU：
 
 | 检查 | 实际结果 |
 |---|---|
-| Gymnasium及物理/接口检查 | 环境检查与5项测试通过 |
-| 小幅随机动作预检 | 累计200控制步／2秒仿真；发生一次正常回合终止并保留 |
-| PPO训练 | 实际2,048个transition，墙钟2.02秒，参数SHA变化，检查点保存成功 |
-| 保存重载及EGL视频 | 四个任务均在0.66秒跌倒，尚未进入起步阶段；失败原样保留 |
-| 策略导出 | 128条物理观测，ONNX最大动作误差8.94e-8，TorchScript误差0 |
-| 续训 | 新增512个transition，参数继续更新；TensorBoard写入新实验目录 |
+| 机构独立FK、闭环、虚功 | 12组姿态；最大误差分别1.33e-7 m、1.22e-16 m、2.55e-9 Nm |
+| 物理/坐标/时序/接口/故障检查 | 10项测试和Gymnasium检查通过 |
+| PPO→续训 | 2,048+512 transition，墙钟约2+1秒；两次参数均更新 |
+| 重载首回合评估 | 四任务均0.75秒跌倒，尚未进入起步；总计3秒仿真 |
+| ONNX/TorchScript | 256条实际仿真观测；最大动作误差1.04e-7 / 0 |
 
-这些结果证明训练、保存、回放与导出链路可运行，**尚未证明学会稳定平衡、行驶或停车**；模型未实机标定。上述耗时来自本机短任务，不是性能保证或长时可靠性测试。完整日志、检查点和失败视频保留在本地`runs/validation-*`，未作为预训练模型发布。
+结果证明环境与训练流程可运行，**不证明已学会稳定运动，也不是长时验证**。原始日志和失败轨迹保留于本地`runs/check-20261019T034506-YZ3GIT`；CI短验收证据由Actions保留14天，不作为预训练权重发布。Python3.12允许安装，本地实测为3.11。
 
 ## 项目结构
 
 ```text
-diablo_training/model.py       原始 URDF → MuJoCo、传感器、执行器
-diablo_training/env.py         物理环境、25维观测、5帧历史、基础课程
-diablo_training/cli.py         预检、训练、回放、导出
-upstream.lock.json            固定原始资源提交与用途
-scripts/setup.sh              安装与模型资源获取
-tests/                       物理及接口检查
-docs/                        中文教程
-runs/                        本地实验与原始失败记录，不提交
-third_party/                 安装时下载的原始资源，不提交
+diablo_training/model.py          CAD → MuJoCo、闭环、IMU、执行器
+diablo_training/control.py        电机坐标、PD/力矩动作、转速包络
+diablo_training/env.py            Gymnasium、传感观测、历史与任务钩子
+diablo_training/validation.py     独立公开机构和驱动校核
+diablo_training/contract.py       检查点兼容校验
+diablo_training/cli.py            训练、续训、回放、导出
+diablo_training/upstream.lock.json 固定原始资源版本
+examples/                        配置和自定义任务示例
+scripts/                         安装与完整流程检查
+tests/                           物理和接口回归检查
+docs/                            中文教程
+runs/                            实验和失败证据，不提交
+third_party/                     原始模型仓库，不提交
 ```
 
-仓库公开以方便团队获取和审查；不要将账号凭据、设备地址、内部数据或实机授权写进配置。
+仓库公开，方便团队获取和审查；内部数据与设备凭据不随仓库分发。

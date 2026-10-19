@@ -8,7 +8,8 @@
 | [DIABLO强化学习示例](https://github.com/DDTRobot/Col_DIABLO_Issac_RL) | Isaac Gym代码、URDF、网格、动作映射参考 | 只拉取固定提交的模型资产；不安装Isaac Gym |
 | [原作者项目](https://github.com/L-SY/wheeled_bipedal_gym) | 训练示例原始来源 | 保留作者与来源 |
 | [Wheel-Legged-Gym](https://github.com/clearlab-sustech/Wheel-Legged-Gym) | 上游算法/环境来源 | 参考资料，不作为运行依赖 |
-| [官方Webots环境](https://github.com/DDTRobot/diablo-sim-env) | 闭环连杆、物理模型、仿真场景参考 | 供机械核对；其README说明没有提供控制器 |
+| [官方Webots环境](https://github.com/DDTRobot/diablo-sim-env) | 闭环连杆、物理模型、仿真场景参考 | 固定提交，用于恢复电机轴向、回程支链和闭环；其README说明没有提供控制器 |
+| [DIABLO论文](https://arxiv.org/html/2407.21500v1) | 机构、直驱电机参数与物理控制分析 | 几何/电机参考，不把论文样机参数当你的实机标定 |
 | [ROS2 SDK](https://github.com/DDTRobot/diablo_ros2) | 运动模式、传感器与六电机状态 | 参考资料，本项目不连接ROS或电机 |
 | [ROS1 SDK](https://github.com/DDTRobot/diablo_sdk) | 机器人控制与通信 | 参考资料 |
 | [MuJoCo建模文档](https://mujoco.readthedocs.io/en/stable/modeling.html) | URDF/MJCF、接触、执行器 | 本项目物理平台 |
@@ -26,3 +27,5 @@
 该上游实验任务的观测拼接实际为27维，而配置继承25维；其动作语义也与普通关节位置任务不同。这里只记录该源码问题，不把未经验证的入口暴露给新手。
 
 本项目从MuJoCo环境开始提供独立、已明确的125维历史输入与6维动作契约，详见[模型接口](model-interface.md)。
+
+公开CAD总质量、轮径与论文样机不同；本项目保留这种差异并记录来源，不拼成一套未经说明的硬件参数。没有获得厂家电机零位/固件限制时，验收范围止于公开参考仿真。

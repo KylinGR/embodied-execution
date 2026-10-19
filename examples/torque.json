@@ -1,0 +1,15 @@
+{
+  "environment": {
+    "action_mode": "torque",
+    "episode_seconds": 20.0,
+    "max_speed": 0.3,
+    "observation_noise": false
+  },
+  "ppo": {
+    "n_steps": 256,
+    "batch_size": 128,
+    "n_epochs": 4,
+    "learning_rate": 0.0003,
+    "policy_kwargs": {"net_arch": [128, 128]}
+  }
+}

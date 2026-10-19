@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "embodied-execution"
-version = "0.1.0"
+version = "0.2.0"
 description = "DIABLO locomotion training with MuJoCo and PPO"
 requires-python = ">=3.11,<3.13"
 license = {text = "BSD-3-Clause"}
@@ -26,3 +26,6 @@ diablo = "diablo_training.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["diablo_training*"]
+
+[tool.setuptools.package-data]
+diablo_training = ["upstream.lock.json"]
