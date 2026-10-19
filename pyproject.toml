@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "embodied-execution"
+version = "0.1.0"
+description = "DIABLO locomotion training with MuJoCo and PPO"
+requires-python = ">=3.11,<3.13"
+license = {text = "BSD-3-Clause"}
+dependencies = [
+  "mujoco==3.8.1",
+  "gymnasium==1.4.0",
+  "stable-baselines3==2.9.0",
+  "torch>=2.8,<3",
+  "tensorboard>=2.17,<3",
+  "numpy>=1.26,<3",
+  "imageio==2.38.1",
+  "imageio-ffmpeg==0.6.0",
+  "onnx>=1.17,<2",
+  "onnxruntime==1.31.0",
+]
+
+[project.scripts]
+diablo = "diablo_training.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["diablo_training*"]
