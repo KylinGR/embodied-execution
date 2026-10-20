@@ -52,10 +52,16 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(self.env.data.time, 0.0)
 
     def test_courses_reach_motion_and_then_hold(self):
-        self.assertEqual(command_profile(19, 0, 0.5), 0.0)
-        for task in (1, 3, 4):
-            self.assertEqual(command_profile(19, task, 0.5), 0.0)
-        self.assertAlmostEqual(command_profile(19, 2, 0.5), 0.5)
+        speed = 0.5
+        expected = {
+            0: 0.0,  # stand_balance：全程零指令
+            1: 0.0,  # single_start_stop：10 秒后停车保持
+            2: 0.5,  # cruise_balance：持续巡航，1.0 × speed
+            3: 0.2,  # drive_accel_decel：减速到低速并保持，0.4 × speed
+            4: 0.0,  # repeat_start_stop：16 秒后停车保持
+        }
+        for task, value in expected.items():
+            self.assertAlmostEqual(command_profile(19, task, speed), value)
 
 
     def test_invalid_configuration_is_rejected(self):
