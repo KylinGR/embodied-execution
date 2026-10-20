@@ -470,6 +470,7 @@ class DiabloEnv(gym.Env):
             - transition["wheel_velocity"][1]
         )
         heading_error = float(transition["heading_error"])
+        height_error = float(transition["height_error"])
 
         components = {
             "alive": 1.0,
