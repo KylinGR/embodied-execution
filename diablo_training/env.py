@@ -308,12 +308,13 @@ class DiabloEnv(gym.Env):
         error = float(velocity[0] - command[0])
         reward = (
             1.0
-            + 2 * np.exp(-(error**2) / 0.04)
-            + transition["upright"]
+            + 2 * np.exp(-(error**2) / 0.1)
+            + 3.0 * transition["upright"]
             - 0.5 * velocity[1] ** 2
             - 5 * transition["height_error"] ** 2
+            - 0.5 * np.square(transition["gyro"][:2]).sum() 
             - 0.25 * float(transition["gyro"][2] ** 2)
-            - 0.02 * np.square(action - previous_action).sum()
+            - 0.03 * np.square(action - previous_action).sum()
             - 0.0002 * np.square(transition["torque"]).sum()
             - (5.0 if transition["terminated"] else 0.0)
         )
