@@ -75,23 +75,13 @@ class EnvironmentTests(unittest.TestCase):
 
     def test_velocity_is_in_body_axes_not_inertial_principal_axes(self):
         env = self.env
-
-        # 这个测试检查世界坐标到机体坐标的旋转，
-        # 因此关闭随机初始 yaw，从确定的对齐姿态开始。
-        env.reset(seed=1,options={"randomize_init": False},)
+        env.reset(seed=1)
         velocity = [0.25, -0.13, 0.07]
-
-        # 清除 reset 可能产生的角速度和关节速度
-        env.data.qvel[:] = 0.0
         env.data.qvel[:3] = velocity
-
         mujoco.mj_forward(env.model, env.data)
         np.testing.assert_allclose(env._body_velocity(), velocity, atol=1e-12)
-
-        # 测试绕Z轴旋转 45 度的情况，检查机体坐标是否正确旋转。
         env.data.qpos[3:7] = [np.sqrt(0.5), 0, 0, np.sqrt(0.5)]
         mujoco.mj_forward(env.model, env.data)
-
         np.testing.assert_allclose(
             env._body_velocity(), [-0.13, -0.25, 0.07], atol=1e-12
         )
