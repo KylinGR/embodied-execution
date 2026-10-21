@@ -62,13 +62,16 @@ class DiabloEnv(gym.Env):
         self.render_mode = render_mode
         if render_mode not in (None, "rgb_array"):
             raise ValueError("render_mode must be None or rgb_array")
-        self.model = make_model()
+        self.model = self._make_model()
         self.data = mujoco.MjData(self.model)
         joints = [self.model.joint(n).id for n in JOINTS]
         self.qi = self.model.jnt_qposadr[joints]
         self.vi = self.model.jnt_dofadr[joints]
         self.base_id = self.model.body("diablo_base_link").id
-        self.floor_id = self.model.geom("floor").id
+        self.floor_id = next(
+            (i for i in range(self.model.ngeom) if self.model.geom(i).name == "floor"),
+            -1,
+        )
         self.action_space = spaces.Box(-1.0, 1.0, shape=(6,), dtype=np.float32)
         self.observation_space = spaces.Box(
             -100.0, 100.0, shape=(125,), dtype=np.float32
@@ -86,6 +89,16 @@ class DiabloEnv(gym.Env):
         self.stop_origin = None
         self.command = np.zeros(3)
         self._needs_reset, self._closed, self._faulted = True, False, False
+
+    def _make_model(self):
+        return make_model()
+
+    def _sample_start_xy(self):
+        return 0.0, 0.0
+
+    def ground_height(self, x, y):
+        del x, y
+        return 0.0
 
     def _body_velocity(self):
         velocity = np.zeros(6)
@@ -157,8 +170,11 @@ class DiabloEnv(gym.Env):
         )
         if not np.isfinite(self.speed) or abs(self.speed) > self.config.max_speed:
             raise ValueError("Requested speed is outside the configured command range")
-        self.data.qpos[2] = 0.4
-        self.data.qpos[3:7] = [1, 0, 0, 0]
+        free_qpos = self.model.jnt_qposadr[self.model.joint("floating_base").id]
+        start_x, start_y = self._sample_start_xy()
+        self.data.qpos[free_qpos : free_qpos + 2] = [start_x, start_y]
+        self.data.qpos[free_qpos + 2] = 0.4
+        self.data.qpos[free_qpos + 3 : free_qpos + 7] = [1, 0, 0, 0]
         set_pose(self.model, self.data, DEFAULT_Q)
         mujoco.mj_forward(self.model, self.data)
         wheel_geoms = [
@@ -176,7 +192,13 @@ class DiabloEnv(gym.Env):
                 support = radius * np.sqrt(
                     max(0.0, 1 - axis[2] ** 2)
                 ) + halfwidth * abs(axis[2])
-                bottoms.append(float(self.data.geom_xpos[i, 2] - support))
+                bottoms.append(
+                    (
+                        float(self.data.geom_xpos[i, 2] - support),
+                        float(self.data.geom_xpos[i, 0]),
+                        float(self.data.geom_xpos[i, 1]),
+                    )
+                )
             else:
                 mesh = self.model.geom_dataid[i]
                 first, count = (
@@ -188,9 +210,17 @@ class DiabloEnv(gym.Env):
                     vertices @ self.data.geom_xmat[i].reshape(3, 3).T
                     + self.data.geom_xpos[i]
                 )
-                bottoms.append(float(world[:, 2].min()))
-        bottom = min(bottoms)
-        self.data.qpos[2] += 0.005 - bottom
+                bottoms.append(
+                    (
+                        float(world[:, 2].min()),
+                        float(self.data.geom_xpos[i, 0]),
+                        float(self.data.geom_xpos[i, 1]),
+                    )
+                )
+        clearance = min(
+            bottom - self.ground_height(x, y) for bottom, x, y in bottoms
+        )
+        self.data.qpos[free_qpos + 2] += 0.005 - clearance
         mujoco.mj_forward(self.model, self.data)
         self.reference_height = float(self.data.xpos[self.base_id, 2])
         self.gravity_estimate[:] = [0, 0, -1]
@@ -245,11 +275,10 @@ class DiabloEnv(gym.Env):
         upright = float(rotation[2, 2])
         body_contact = False
         for contact in self.data.contact:
-            if self.floor_id in (contact.geom1, contact.geom2):
-                other = (
-                    contact.geom2 if contact.geom1 == self.floor_id else contact.geom1
-                )
-                body_contact |= self.model.geom_bodyid[other] == self.base_id
+            body1 = int(self.model.geom_bodyid[contact.geom1])
+            body2 = int(self.model.geom_bodyid[contact.geom2])
+            if self.base_id in (body1, body2) and 0 in (body1, body2):
+                body_contact = True
         terminated = bool(upright < 0.5 or body_contact)
         truncated = self.steps * CONTROL_DT >= self.config.episode_seconds
         error = float(velocity[0] - command[0])

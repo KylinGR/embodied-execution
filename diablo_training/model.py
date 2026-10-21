@@ -75,7 +75,8 @@ def _robot_tree():
     return robot
 
 
-def make_model():
+def _robot_spec():
+    """Build the validated robot and common sensors/constraints, without terrain."""
     spec = mujoco.MjSpec.from_string(ET.tostring(_robot_tree(), encoding="unicode"))
     base = spec.body("diablo_base_link")
     base.add_freejoint(name="floating_base")
@@ -85,15 +86,6 @@ def make_model():
     spec.option.iterations = 80
     spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
     spec.option.disableflags |= mujoco.mjtDisableBit.mjDSBL_AUTORESET
-    spec.worldbody.add_geom(
-        name="floor",
-        type=mujoco.mjtGeom.mjGEOM_PLANE,
-        size=[20, 20, 0.1],
-        rgba=[0.23, 0.26, 0.30, 1],
-        contype=2,
-        conaffinity=1,
-        friction=[0.8, 0.005, 0.0001],
-    )
     spec.worldbody.add_light(pos=[0, -3, 4], dir=[0, 0, -1])
     site = base.add_site(name="body_imu", size=[0.005] * 3)
     for name, kind in (
@@ -137,12 +129,30 @@ def make_model():
             forcerange=[-STALL_TORQUE, STALL_TORQUE],
         )
     for geom in spec.geoms:
-        if geom.name != "floor" and (geom.contype or geom.conaffinity):
+        if geom.contype or geom.conaffinity:
             geom.contype, geom.conaffinity = 1, 2
             geom.friction = [0.8, 0.005, 0.0001]
+    return spec
+
+
+def _finish_model(spec):
     model = spec.compile()
     model.vis.global_.offwidth, model.vis.global_.offheight = 960, 720
     return model
+
+
+def make_model():
+    spec = _robot_spec()
+    spec.worldbody.add_geom(
+        name="floor",
+        type=mujoco.mjtGeom.mjGEOM_PLANE,
+        size=[20, 20, 0.1],
+        rgba=[0.23, 0.26, 0.30, 1],
+        contype=2,
+        conaffinity=1,
+        friction=[0.8, 0.005, 0.0001],
+    )
+    return _finish_model(spec)
 
 
 def set_pose(model, data, motor_q):

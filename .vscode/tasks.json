@@ -1,0 +1,77 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "XINGTIAN: setup",
+      "type": "shell",
+      "command": "bash scripts/setup.sh",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "XINGTIAN: fetch assets",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python -m diablo_training.cli fetch",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "XINGTIAN: doctor",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python -m diablo_training.cli doctor",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "XINGTIAN: unit tests",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python -m unittest discover -s tests -v",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "XINGTIAN: benchmark dummy",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python -m diablo_training.cli benchmark --vec-env dummy --n-envs 4 --steps 200",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "XINGTIAN: benchmark subprocess",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python -m diablo_training.cli benchmark --vec-env subproc --n-envs 16 --steps 200",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "XINGTIAN: short training",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python -m diablo_training.cli train --config examples/xingtian_reference.json --device auto --vec-env subproc --n-envs 4 --steps 4096 --output runs/${input:runName}",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "runName",
+      "type": "promptString",
+      "description": "New output directory name under runs/",
+      "default": "xingtian-short-001"
+    }
+  ]
+}
