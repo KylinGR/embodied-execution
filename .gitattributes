@@ -1,1 +1,8 @@
 *.sh text eol=lf
+# Checkpoints fingerprint source bytes; preserve the evaluated line endings.
+diablo_training/env.py -text
+diablo_training/model.py -text
+diablo_training/control.py -text
+examples/stable_landing_v3.py -text
+examples/stable_landing_fast_v3.py -text
+examples/qualify_landing.py -text

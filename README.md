@@ -10,6 +10,8 @@ v0.2已按公开CAD、官方Webots和论文校核串联髋膝电机、平行四�
 
 ## 开始训练
 
+新增实验：[平稳落地训练、独立验收与已训练模型](docs/stable-landing.md)。当前反馈＋PPO 残差策略通过约 2–5 cm 仿真自由落地采样验收；不代表主动跳跃或实机能力，默认平地任务保持原状。
+
 需要Linux、Git和Python **3.11或3.12**。不要求NVIDIA GPU；完整步骤见[中文教程](docs/tutorial.md)。
 
 ```bash

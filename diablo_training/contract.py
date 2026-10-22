@@ -44,6 +44,22 @@ def policy_contract(env):
             "order": "oldest_to_current",
         },
     }
+    # Opt-in v3 keeps historical v2 checkpoints reproducible while allowing
+    # new tasks to declare augmented observations and fingerprint inheritance.
+    if getattr(env, "contract_version", 2) >= 3:
+        content["interface_version"] = 3
+        content["task_class"] = f"{type(env).__module__}:{type(env).__qualname__}"
+        implementation["task_hierarchy"] = {
+            cls.__module__: hashlib.sha256(
+                Path(inspect.getsourcefile(cls)).read_bytes()
+            ).hexdigest()
+            for cls in type(env).__mro__
+            if issubclass(cls, DiabloEnv)
+        }
+        declared = dict(env.contract_observation)
+        if declared.get("shape") != list(env.observation_space.shape):
+            raise ValueError("Declared observation contract does not match space")
+        content["observation"] = declared
     content["sha256"] = hashlib.sha256(
         json.dumps(content, sort_keys=True).encode()
     ).hexdigest()
