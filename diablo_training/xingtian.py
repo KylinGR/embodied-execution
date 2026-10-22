@@ -326,7 +326,7 @@ class LocomotionReward:
         w = self.weights
         terms = {
             "forward_tracking": w.forward_tracking * np.exp(-(vx_error**2) / 0.04),
-            "yaw_tracking": w.yaw_tracking * (np.exp(-(yaw_error**2) / 0.25) if abs(command[1]) > 0.1 else 0.3 * np.exp(-(gyro[2]**2) / 0.04)),
+            "yaw_tracking": w.yaw_tracking * (np.exp(-(yaw_error**2) / 0.25) if abs(command[1]) > 0.1 else np.exp(-(gyro[2]**2) / 0.01)),
             "upright": w.upright * np.exp(
                 -max(0.0, (1.0 - upright) ** 2) / 0.02
             ),
