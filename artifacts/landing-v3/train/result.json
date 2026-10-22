@@ -1,0 +1,10 @@
+{
+  "actual_total_timesteps": 200704,
+  "actual_additional_timesteps": 200704,
+  "requested_additional_timesteps": 200000,
+  "wall_seconds": 457.589459094,
+  "parameters_changed": true,
+  "parameter_sha256_after": "fe34578083bea3b274182c413218735a2278b3c9851b6a1761aff31bc6b00c99",
+  "policy": "policy.zip",
+  "scope": "PPO training completed; evaluate locomotion separately"
+}

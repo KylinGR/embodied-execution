@@ -1,0 +1,12 @@
+{
+  "environment_class": "wheel_balance:WheelBalanceEnv",
+  "ppo": {
+    "n_steps": 256,
+    "batch_size": 128,
+    "n_epochs": 8,
+    "gamma": 0.995,
+    "ent_coef": 0.001,
+    "target_kl": 0.02,
+    "policy_kwargs": {"net_arch": [128, 128], "log_std_init": -1.0}
+  }
+}

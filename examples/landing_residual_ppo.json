@@ -1,0 +1,10 @@
+{
+  "environment_class": "landing_residual:ResidualLandingEnv",
+  "environment": {"episode_seconds": 4.0},
+  "ppo": {
+    "n_steps": 256, "batch_size": 128, "n_epochs": 4,
+    "learning_rate": 0.0001, "gamma": 0.995,
+    "ent_coef": 0.0, "target_kl": 0.015,
+    "policy_kwargs": {"net_arch": [128, 128], "log_std_init": -2.0}
+  }
+}
