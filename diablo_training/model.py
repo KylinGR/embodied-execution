@@ -81,6 +81,8 @@ def _robot_spec():
     base = spec.body("diablo_base_link")
     base.add_freejoint(name="floating_base")
     base.pos = [0, 0, 0.4]
+    from diablo_training.model_ext import add_structure
+    add_structure(spec, base)
     spec.option.timestep = PHYSICS_DT
     spec.option.gravity = [0, 0, -9.81]
     spec.option.iterations = 80
