@@ -24,8 +24,8 @@ from .xingtian_terrain import (
 class XingtianConfig(Config):
     max_backward_speed: float = 0.8
     max_yaw_rate: float = 1.5
-    min_height: float = 0.16
-    max_height: float = 0.34
+    min_height: float = 0.119
+    max_height: float = 0.379
     command_duration_min: float = 2.0
     command_duration_max: float = 6.0
     command_ramp_seconds: float = 0.35
@@ -102,7 +102,15 @@ class XingtianFlatEnv(DiabloEnv):
     def reset(self, *, seed=None, options=None):
         self.command_scheduler = None
         self._previous_previous_action[:] = 0
-        return super().reset(seed=seed, options=options)
+        result = super().reset(seed=seed, options=options)
+        # 保持锚点：初始化为出生点，之后在指令切换时更新。
+        self._hold_xy = np.asarray(self.data.xpos[self.base_id, :2],
+                                   dtype=float).copy()
+        _rot = np.asarray(self.data.xmat[self.base_id],
+                          dtype=float).reshape(3, 3)
+        self._hold_yaw = float(np.arctan2(_rot[1, 0], _rot[0, 0]))
+        self._prev_cmd_abs = None
+        return result
 
     def get_command(self, sim_seconds):
         if self.command_scheduler is None:
@@ -113,6 +121,27 @@ class XingtianFlatEnv(DiabloEnv):
         qvel = self.data.qvel[self.vi]
         torque = transition["torque"]
         transition = dict(transition)
+        # 保持锚点：只在"指令刚切换为停止/停止转弯"的那一刻更新，
+        # 之后冻结，用来度量"被要求不动之后漂了多少"。
+        # 锚点若固定在 reset()，开出去 2.5 m 后停车会被罚 3.75/步，
+        # 是 forward 满分（0.012）的 3 倍，策略会学会哪儿也不去（A-fix5 实测）。
+        if getattr(self, "_hold_xy", None) is not None:
+            _rot = np.asarray(self.data.xmat[self.base_id],
+                              dtype=float).reshape(3, 3)
+            _yaw = float(np.arctan2(_rot[1, 0], _rot[0, 0]))
+            _xy = np.asarray(self.data.xpos[self.base_id, :2], dtype=float)
+            _cmd = transition["command"]
+            _cv, _cw = abs(float(_cmd[0])), abs(float(_cmd[1]))
+            _prev = self._prev_cmd_abs
+            if _prev is not None:
+                if _prev[0] >= 0.05 and _cv < 0.05:
+                    self._hold_xy = _xy.copy()
+                if _prev[1] > 0.1 and _cw <= 0.1:
+                    self._hold_yaw = _yaw
+            self._prev_cmd_abs = (_cv, _cw)
+            _d = (_yaw - self._hold_yaw + np.pi) % (2.0 * np.pi) - np.pi
+            transition["heading_error"] = float(_d)
+            transition["pos_error"] = float(np.hypot(*(_xy - self._hold_xy)))
         transition["joint_power"] = torque * qvel
         transition["joint_acceleration"] = np.zeros(4)
         joint_ids = [self.model.joint(name).id for name in (

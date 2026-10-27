@@ -320,17 +320,32 @@ class LocomotionReward:
         torque = np.asarray(transition["torque"], dtype=float)
         upright = float(np.clip(transition["upright"], -1.0, 1.0))
         height_error = float(transition["height_error"])
+        heading_error = float(transition.get("heading_error", 0.0))
+        pos_error = float(transition.get("pos_error", 0.0))
         vx_error = float(velocity[0] - command[0])
         yaw_error = float(gyro[2] - command[1])
 
         w = self.weights
         terms = {
             "forward_tracking": w.forward_tracking * np.exp(-(vx_error**2) / 0.04),
-            "yaw_tracking": w.yaw_tracking * np.exp(-(yaw_error**2) / 0.09),
+            "yaw_tracking": w.yaw_tracking * (
+                np.exp(-(yaw_error**2) / 0.09) if abs(command[1]) > 0.1
+                else float(np.clip(1.0 - abs(gyro[2]) / 0.30, -1.0, 1.0))
+            ),
             "upright": w.upright * np.exp(
                 -max(0.0, (1.0 - upright) ** 2) / 0.02
             ),
-            "height": w.height * np.exp(-(height_error**2) / 0.0004),
+            "height": -w.height * abs(height_error) / 0.05,
+            # 绝对朝向：只要没在下转弯指令就生效——走直线也要求保持朝向。
+            "heading_hold": (
+                -0.30 * abs(heading_error) / 0.15
+                if abs(command[1]) <= 0.1 else 0.0
+            ),
+            # 绝对位置：只在没在下行驶指令时生效，避免和正常行驶打架。
+            "position_hold": (
+                -0.30 * abs(pos_error) / 0.20
+                if abs(command[0]) < 0.05 else 0.0
+            ),
             "vertical_velocity": -w.vertical_velocity * float(velocity[2] ** 2),
             "angular_velocity_xy": -w.angular_velocity_xy
             * float(np.sum(gyro[:2] ** 2)),
