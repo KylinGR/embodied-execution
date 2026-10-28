@@ -38,6 +38,7 @@ def fetch():
                 [
                     "git",
                     "clone",
+                    "--filter=blob:none",
                     "--no-checkout",
                     entry["repository"],
                     str(destination),

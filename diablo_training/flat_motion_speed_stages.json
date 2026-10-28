@@ -1,0 +1,2234 @@
+{
+  "version": 1,
+  "order": [
+    "flat_motion_020",
+    "flat_motion_040",
+    "flat_motion_060",
+    "flat_motion_080",
+    "flat_motion_100",
+    "flat_motion_120",
+    "flat_motion_140",
+    "flat_motion_160",
+    "flat_motion_180",
+    "flat_motion_200"
+  ],
+  "target_whole_height_m": 0.37958,
+  "target_base_height_m": 0.270943,
+  "validation_seeds": [
+    2001,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010
+  ],
+  "blind_seeds": [
+    3101,
+    3102,
+    3103,
+    3104,
+    3105,
+    3106,
+    3107,
+    3108,
+    3109,
+    3110
+  ],
+  "limit_seeds": [
+    4101,
+    4102,
+    4103
+  ],
+  "ppo": {
+    "n_steps": 512,
+    "batch_size": 1024,
+    "n_epochs": 5,
+    "learning_rate": 0.0002,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "ent_coef": 0.005,
+    "clip_range": 0.2,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "policy_kwargs": {
+      "net_arch": [
+        256,
+        256
+      ]
+    }
+  },
+  "reward_defaults": {
+    "common_penalties": {
+      "lateral": 0.4,
+      "action_rate": 0.03,
+      "torque": 0.01,
+      "over_rated": 0.1,
+      "joint_limit": 0.1,
+      "zero_speed": 0.3,
+      "wheel_alignment": 1.0,
+      "wheel_sync": 0.5,
+      "fall": 20.0
+    },
+    "speed_tolerance_base_mps": 0.03,
+    "speed_tolerance_slope": 0.05,
+    "yaw_tolerance_base_rad_s": 0.12,
+    "yaw_tolerance_slope": 0.2,
+    "yaw_zero_guard": 0.5,
+    "height_tolerance_m": 0.025,
+    "pitch_weight": 0.2,
+    "pitch_tolerance_rad": 0.0873,
+    "steady_pitch_acceleration_mps2": 0.01,
+    "pitch_gate": {
+      "max_mean_abs_pitch_deg": 5.0,
+      "max_pitch_deg": 10.0,
+      "max_mean_abs_steady_pitch_deg": 5.0
+    },
+    "zero_speed_tolerance_mps": 0.03,
+    "drift_tolerance_m": 0.03,
+    "wheel_alignment_tolerance_m": 0.01,
+    "wheel_sync_tolerance_mps": 0.05,
+    "straight_yaw_threshold_rad_s": 0.05,
+    "wheel_slip_tolerance_mps": 0.5,
+    "acceleration_tolerance_mps2": 0.1
+  },
+  "randomization": {
+    "friction_min": 0.65,
+    "friction_max": 1.0,
+    "mass_scale_min": 0.95,
+    "mass_scale_max": 1.05,
+    "actuator_scale_min": 0.9,
+    "actuator_scale_max": 1.1
+  },
+  "stages": {
+    "flat_motion_020": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 0.2,
+        "backward": 0.2,
+        "yaw": 1.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              0.2,
+              0.0
+            ],
+            [
+              14.0,
+              0.2,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -0.2,
+              0.0
+            ],
+            [
+              14.0,
+              -0.2,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              0.2,
+              0.0
+            ],
+            [
+              8.0,
+              0.2,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -0.2,
+              0.0
+            ],
+            [
+              20.0,
+              -0.2,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 3.0,
+        "underspeed": 0.5,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.4,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.6,
+        "wheel_slip": 0.2,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.2,
+        "backslide": 0.25,
+        "over_rated": 0.1,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.16,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.08,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 4.0,
+        "max_pitch_deg": 8.0,
+        "max_mean_abs_steady_pitch_deg": 4.0,
+        "max_mean_abs_roll_deg": 3.0,
+        "max_roll_deg": 5.0,
+        "max_final_heading_error_deg": 4.0,
+        "max_cross_track_error_m": 0.05,
+        "mean_height_tolerance_m": 0.015,
+        "max_height_deviation_m": 0.03,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.012,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.01,
+        "max_wheel_center_offset_m": 0.015,
+        "max_straight_wheel_speed_difference_mps": 0.03
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.00,
+        "height_tolerance_m": 0.015,
+        "pitch_weight": 0.4,
+        "pitch_tolerance_rad": 0.06981317,
+        "wheel_slip_tolerance_mps": 0.05,
+        "acceleration_tolerance_mps2": 0.1,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.01,
+        "wheel_sync_tolerance_mps": 0.03
+      },
+      "overrides": {
+        "action_rate": 0.03
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.0015
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 12.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      }
+    },
+    "flat_motion_040": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 0.4,
+        "backward": 0.4,
+        "yaw": 1.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              0.4,
+              0.0
+            ],
+            [
+              14.0,
+              0.4,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -0.4,
+              0.0
+            ],
+            [
+              14.0,
+              -0.4,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              0.4,
+              0.0
+            ],
+            [
+              8.0,
+              0.4,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -0.4,
+              0.0
+            ],
+            [
+              20.0,
+              -0.4,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 3.0,
+        "underspeed": 0.5,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.4,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.6,
+        "wheel_slip": 0.2,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.15,
+        "backslide": 0.2,
+        "over_rated": 0.1,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.16,
+        "max_speed_mae_fraction_of_peak": 0.2,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.09,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 4.0,
+        "max_pitch_deg": 8.0,
+        "max_mean_abs_steady_pitch_deg": 4.0,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.009,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.011,
+        "max_wheel_center_offset_m": 0.04,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.05,
+        "pitch_weight": 0.4,
+        "pitch_tolerance_rad": 0.06981317,
+        "wheel_slip_tolerance_mps": 0.1,
+        "acceleration_tolerance_mps2": 0.15,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.011
+      },
+      "overrides": {
+        "action_rate": 0.03
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.0015
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 12.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      }
+    },
+    "flat_motion_060": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 0.6,
+        "backward": 0.6,
+        "yaw": 1.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              0.6,
+              0.0
+            ],
+            [
+              14.0,
+              0.6,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -0.6,
+              0.0
+            ],
+            [
+              14.0,
+              -0.6,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              0.6,
+              0.0
+            ],
+            [
+              8.0,
+              0.6,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -0.6,
+              0.0
+            ],
+            [
+              20.0,
+              -0.6,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 3.1,
+        "underspeed": 0.6,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.38,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.6,
+        "wheel_slip": 0.22,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.25,
+        "backslide": 0.25,
+        "over_rated": 0.1,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.16,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.1,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 4.25,
+        "max_pitch_deg": 8.5,
+        "max_mean_abs_steady_pitch_deg": 4.25,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.01,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.012,
+        "max_wheel_center_offset_m": 0.04,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.05,
+        "pitch_weight": 0.38,
+        "pitch_tolerance_rad": 0.074176493,
+        "wheel_slip_tolerance_mps": 0.12,
+        "acceleration_tolerance_mps2": 0.1,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.012
+      },
+      "overrides": {
+        "action_rate": 0.035
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.0015
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 12.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      }
+    },
+    "flat_motion_080": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 0.8,
+        "backward": 0.8,
+        "yaw": 1.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              0.8,
+              0.0
+            ],
+            [
+              14.0,
+              0.8,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -0.8,
+              0.0
+            ],
+            [
+              14.0,
+              -0.8,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              0.8,
+              0.0
+            ],
+            [
+              8.0,
+              0.8,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -0.8,
+              0.0
+            ],
+            [
+              20.0,
+              -0.8,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 3.2,
+        "underspeed": 0.7,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.36,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.65,
+        "wheel_slip": 0.24,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.3,
+        "backslide": 0.25,
+        "over_rated": 0.1,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.16,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.11,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 4.5,
+        "max_pitch_deg": 9.0,
+        "max_mean_abs_steady_pitch_deg": 4.5,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.011,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.013,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.05,
+        "pitch_weight": 0.36,
+        "pitch_tolerance_rad": 0.078539816,
+        "wheel_slip_tolerance_mps": 0.12,
+        "acceleration_tolerance_mps2": 0.15,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.013
+      },
+      "overrides": {
+        "action_rate": 0.04
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.0015
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 12.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      }
+    },
+    "flat_motion_100": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 1.0,
+        "backward": 1.0,
+        "yaw": 1.0
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 14.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.0,
+              0.0
+            ],
+            [
+              14.0,
+              1.0,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -1.0,
+              0.0
+            ],
+            [
+              14.0,
+              -1.0,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.0,
+              0.0
+            ],
+            [
+              8.0,
+              1.0,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -1.0,
+              0.0
+            ],
+            [
+              20.0,
+              -1.0,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 3.4,
+        "underspeed": 0.8,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.34,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.7,
+        "wheel_slip": 0.26,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.35,
+        "backslide": 0.25,
+        "over_rated": 0.09,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.2,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.12,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 4.75,
+        "max_pitch_deg": 9.5,
+        "max_mean_abs_steady_pitch_deg": 4.75,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.012,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.014,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.05,
+        "pitch_weight": 0.34,
+        "pitch_tolerance_rad": 0.082903139,
+        "wheel_slip_tolerance_mps": 0.12,
+        "acceleration_tolerance_mps2": 0.15,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.014
+      },
+      "overrides": {
+        "action_rate": 0.045
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.0015
+      }
+    },
+    "flat_motion_120": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 1.2,
+        "backward": 1.2,
+        "yaw": 1.0
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 17.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.2,
+              0.0
+            ],
+            [
+              14.0,
+              1.2,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -1.2,
+              0.0
+            ],
+            [
+              14.0,
+              -1.2,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.2,
+              0.0
+            ],
+            [
+              8.0,
+              1.2,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -1.2,
+              0.0
+            ],
+            [
+              20.0,
+              -1.2,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 3.6,
+        "underspeed": 0.9,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.32,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.7,
+        "wheel_slip": 0.28,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.4,
+        "backslide": 0.25,
+        "over_rated": 0.08,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.2,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.13,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 5.0,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 5.0,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.013,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.015,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      },
+      "overrides": {
+        "action_rate": 0.05
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.001
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.05,
+        "pitch_weight": 0.32,
+        "pitch_tolerance_rad": 0.087266463,
+        "wheel_slip_tolerance_mps": 0.12,
+        "acceleration_tolerance_mps2": 0.2,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.015
+      }
+    },
+    "flat_motion_140": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 1.4,
+        "backward": 1.4,
+        "yaw": 1.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.4,
+              0.0
+            ],
+            [
+              14.0,
+              1.4,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -1.4,
+              0.0
+            ],
+            [
+              14.0,
+              -1.4,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.4,
+              0.0
+            ],
+            [
+              8.0,
+              1.4,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -1.4,
+              0.0
+            ],
+            [
+              20.0,
+              -1.4,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 3.8,
+        "underspeed": 1.0,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.3,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.7,
+        "wheel_slip": 0.3,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.45,
+        "backslide": 0.25,
+        "over_rated": 0.07,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.2,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.14,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 5.25,
+        "max_pitch_deg": 10.5,
+        "max_mean_abs_steady_pitch_deg": 5.25,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.014,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.016,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      },
+      "overrides": {
+        "action_rate": 0.05
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.001
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 19.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.05,
+        "pitch_weight": 0.3,
+        "pitch_tolerance_rad": 0.091629786,
+        "wheel_slip_tolerance_mps": 0.12,
+        "acceleration_tolerance_mps2": 0.2,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.016
+      }
+    },
+    "flat_motion_160": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 1.6,
+        "backward": 1.6,
+        "yaw": 1.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.6,
+              0.0
+            ],
+            [
+              14.0,
+              1.6,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -1.6,
+              0.0
+            ],
+            [
+              14.0,
+              -1.6,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.6,
+              0.0
+            ],
+            [
+              8.0,
+              1.6,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -1.6,
+              0.0
+            ],
+            [
+              20.0,
+              -1.6,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 4.0,
+        "underspeed": 1.1,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.28,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.7,
+        "wheel_slip": 0.32,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.5,
+        "backslide": 0.25,
+        "over_rated": 0.06,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.2,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.15,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 5.5,
+        "max_pitch_deg": 11.0,
+        "max_mean_abs_steady_pitch_deg": 5.5,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.015,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.017,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      },
+      "overrides": {
+        "action_rate": 0.06
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.001
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 20.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.05,
+        "pitch_weight": 0.28,
+        "pitch_tolerance_rad": 0.095993109,
+        "wheel_slip_tolerance_mps": 0.12,
+        "acceleration_tolerance_mps2": 0.25,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.017
+      }
+    },
+    "flat_motion_180": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 1.8,
+        "backward": 1.8,
+        "yaw": 1.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.8,
+              0.0
+            ],
+            [
+              14.0,
+              1.8,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -1.8,
+              0.0
+            ],
+            [
+              14.0,
+              -1.8,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              1.8,
+              0.0
+            ],
+            [
+              8.0,
+              1.8,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -1.8,
+              0.0
+            ],
+            [
+              20.0,
+              -1.8,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 4.0,
+        "underspeed": 1.2,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.26,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.7,
+        "wheel_slip": 0.34,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.5,
+        "backslide": 0.25,
+        "over_rated": 0.05,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.2,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.15,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 5.75,
+        "max_pitch_deg": 11.5,
+        "max_mean_abs_steady_pitch_deg": 5.75,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.016,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.0185,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      },
+      "overrides": {
+        "action_rate": 0.06
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.001
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 21.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.05,
+        "pitch_weight": 0.26,
+        "pitch_tolerance_rad": 0.100356432,
+        "wheel_slip_tolerance_mps": 0.12,
+        "acceleration_tolerance_mps2": 0.3,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.0185
+      }
+    },
+    "flat_motion_200": {
+      "budget": 8000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 2.0,
+        "backward": 2.0,
+        "yaw": 1.0
+      },
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              2.0,
+              0.0
+            ],
+            [
+              14.0,
+              2.0,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              -2.0,
+              0.0
+            ],
+            [
+              14.0,
+              -2.0,
+              0.0
+            ],
+            [
+              18.0,
+              0.0,
+              0.0
+            ],
+            [
+              20.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              2.0,
+              0.0
+            ],
+            [
+              8.0,
+              2.0,
+              0.0
+            ],
+            [
+              12.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ],
+            [
+              18.0,
+              -2.0,
+              0.0
+            ],
+            [
+              20.0,
+              -2.0,
+              0.0
+            ],
+            [
+              24.0,
+              0.0,
+              0.0
+            ],
+            [
+              26.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 4.0,
+        "underspeed": 1.2,
+        "yaw": 0.6,
+        "height": 1.4,
+        "upright": 0.6,
+        "pitch": 0.24,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.7,
+        "wheel_slip": 0.36,
+        "in_place": 0.0,
+        "vertical_velocity": 0.05,
+        "angular_xy": 0.1,
+        "braking": 0.6,
+        "backslide": 0.25,
+        "over_rated": 0.04,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.2,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_yaw_mae_rad_s": 0.15,
+        "min_upright": 0.96,
+        "max_mean_abs_pitch_deg": 6.0,
+        "max_pitch_deg": 12.0,
+        "max_mean_abs_steady_pitch_deg": 6.0,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.12,
+        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_stop_speed_mps": 0.018,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_hold_drift_m": 0.02,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      },
+      "overrides": {
+        "action_rate": 0.07
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "target_kl": 0.02,
+        "ent_coef": 0.001
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 22.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.03,
+        "speed_tolerance_slope": 0.05,
+        "pitch_weight": 0.24,
+        "pitch_tolerance_rad": 0.104719755,
+        "wheel_slip_tolerance_mps": 0.12,
+        "acceleration_tolerance_mps2": 0.3,
+        "zero_speed_tolerance_mps": 0.003,
+        "drift_tolerance_m": 0.02
+      }
+    }
+  }
+}

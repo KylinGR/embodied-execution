@@ -1,0 +1,454 @@
+{
+  "version": 2,
+  "order": [
+    "flat_balance",
+    "flat_motion",
+    "flat_turning",
+    "flat_start_stop",
+    "slope",
+    "rough",
+    "roller_obstacle",
+    "composite"
+  ],
+  "target_whole_height_m": 0.37958,
+  "target_base_height_m": 0.270943,
+  "validation_seeds": [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010],
+  "blind_seeds": [3101, 3102, 3103, 3104, 3105, 3106, 3107, 3108, 3109, 3110],
+  "limit_seeds": [4101, 4102, 4103],
+  "ppo": {
+    "n_steps": 128,
+    "batch_size": 1024,
+    "n_epochs": 5,
+    "learning_rate": 0.0002,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "ent_coef": 0.005,
+    "clip_range": 0.2,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "policy_kwargs": {"net_arch": [256, 256]}
+  },
+  "reward_defaults": {
+    "common_penalties": {
+      "lateral": 0.4,
+      "action_rate": 0.03,
+      "torque": 0.01,
+      "over_rated": 0.1,
+      "joint_limit": 0.1,
+      "zero_speed": 0.3,
+      "wheel_alignment": 1.0,
+      "wheel_sync": 0.5,
+      "fall": 20.0
+    },
+    "speed_tolerance_base_mps": 0.08,
+    "speed_tolerance_slope": 0.08,
+    "yaw_tolerance_base_rad_s": 0.12,
+    "yaw_tolerance_slope": 0.2,
+    "yaw_zero_guard": 0.5,
+    "height_tolerance_m": 0.025,
+    "wheel_slip_tolerance_mps": 0.5,
+    "pitch_weight": 0.15,
+    "pitch_tolerance_rad": 0.0873,
+    "steady_pitch_acceleration_mps2": 0.01,
+    "pitch_gate": {
+      "max_mean_abs_pitch_deg": 5.0,
+      "max_pitch_deg": 10.0,
+      "max_mean_abs_steady_pitch_deg": 4.0
+    },
+    "zero_speed_tolerance_mps": 0.03,
+    "drift_tolerance_m": 0.2,
+    "wheel_alignment_tolerance_m": 0.01,
+    "wheel_sync_tolerance_mps": 0.05,
+    "straight_yaw_threshold_rad_s": 0.05,
+    "acceleration_tolerance_mps2": 0.8
+  },
+  "randomization": {
+    "friction_min": 0.65,
+    "friction_max": 1.0,
+    "mass_scale_min": 0.95,
+    "mass_scale_max": 1.05,
+    "actuator_scale_min": 0.9,
+    "actuator_scale_max": 1.1
+  },
+  "stages": {
+    "flat_balance": {
+      "budget": 10000000,
+      "terrain": {"kind": "flat", "length_m": 30.0, "width_m": 4.0},
+      "limits": {"forward": 0.3, "backward": 0.3, "yaw": 0.3},
+      "profiles": [
+        {"name": "hold", "start": "start", "points": [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]]}
+      ],
+      "reward_weights": {
+        "speed": 0.25,
+        "yaw": 0.5,
+        "height": 2.0,
+        "upright": 1.5,
+        "pitch": 0.2,
+        "stationary": 0.75,
+        "drift": 1.0,
+        "zero_speed": 1.5,
+        "acceleration": 0.0,
+        "wheel_slip": 0.0,
+        "in_place": 0.0,
+        "vertical_velocity": 0.0,
+        "angular_xy": 0.05,
+        "braking": 0.0,
+        "backslide": 0.0,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.05,
+        "max_yaw_mae_rad_s": 0.08,
+        "min_upright": 0.95,
+        "max_mean_abs_pitch_deg": 4.0,
+        "max_pitch_deg": 8.0,
+        "max_mean_abs_steady_pitch_deg": 4.0,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_hold_drift_m": 0.2,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15,
+        "min_stop_cycles": 0
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 12.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 20.0
+      }
+    },
+    "flat_motion": {
+      "budget": 12000000,
+      "terrain": {"kind": "flat", "length_m": 40.0, "width_m": 4.0},
+      "limits": {"forward": 2.0, "backward": 2.0, "yaw": 1.0},
+      "profiles": [
+        {"name": "forward", "start": "start", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 2.0, 0.0], [12.0, 2.0, 0.0], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]},
+        {"name": "backward", "start": "end", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, -2.0, 0.0], [12.0, -2.0, 0.0], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]},
+        {"name": "accel_decel", "start": "start", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 2.0, 0.0], [6.0, 2.0, 0.0], [8.0, 0.0, 0.0], [10.0, 0.0, 0.0], [12.0, -2.0, 0.0], [14.0, -2.0, 0.0], [16.0, 0.0, 0.0], [18.0, 0.0, 0.0]]}
+      ],
+      "reward_weights": {
+        "speed": 2.5,
+        "yaw": 0.6,
+        "height": 1.2,
+        "upright": 0.4,
+        "stationary": 0.5,
+        "drift": 0.0,
+        "acceleration": 0.4,
+        "wheel_slip": 0.1,
+        "in_place": 0.0,
+        "vertical_velocity": 0.0,
+        "angular_xy": 0.05,
+        "braking": 0.2,
+        "backslide": 0.25,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.8,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.2,
+        "max_speed_mae_fraction_of_peak": 0.3,
+        "min_planned_peak_progress_fraction": 0.5,
+        "max_yaw_mae_rad_s": 0.15,
+        "min_upright": 0.9,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_wheel_slip_mps": 0.3,
+        "max_wheel_slip_fraction_of_peak": 0.5,
+        "max_stop_speed_mps": 0.1,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      }
+    },
+    "flat_turning": {
+      "budget": 10000000,
+      "terrain": {"kind": "flat", "length_m": 35.0, "width_m": 5.0},
+      "limits": {"forward": 0.8, "backward": 0.4, "yaw": 1.0},
+      "profiles": [
+        {"name": "turn_left", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 1.0], [7.0, 0.0, 1.0], [9.0, 0.0, 0.0], [11.0, 0.0, 0.0]]},
+        {"name": "turn_right", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, -1.0], [7.0, 0.0, -1.0], [9.0, 0.0, 0.0], [11.0, 0.0, 0.0]]},
+        {"name": "turn_forward", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.6, 0.5], [6.0, 0.6, 0.5], [8.0, 0.5, -0.5], [12.0, 0.5, -0.5], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]},
+        {"name": "turn_backward", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, -0.3, 0.4], [6.0, -0.3, 0.4], [8.0, -0.3, -0.4], [12.0, -0.3, -0.4], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]}
+      ],
+      "reward_weights": {
+        "speed": 1.0,
+        "yaw": 2.5,
+        "height": 0.4,
+        "upright": 0.6,
+        "stationary": 0.5,
+        "drift": 0.0,
+        "acceleration": 0.2,
+        "wheel_slip": 0.1,
+        "in_place": 0.4,
+        "vertical_velocity": 0.0,
+        "angular_xy": 0.05,
+        "braking": 0.1,
+        "backslide": 0.0,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.8,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.2,
+        "max_yaw_mae_rad_s": 0.2,
+        "min_upright": 0.9,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_hold_drift_m": 0.2,
+        "max_in_place_displacement_m": 0.2,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15
+      }
+    },
+    "flat_start_stop": {
+      "budget": 10000000,
+      "terrain": {"kind": "flat", "length_m": 35.0, "width_m": 4.0},
+      "limits": {"forward": 1.0, "backward": 0.5, "yaw": 0.3},
+      "profiles": [
+        {"name": "three_starts_stops", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.6, 0.0], [4.0, 0.6, 0.0], [5.0, 0.0, 0.0], [6.5, 0.0, 0.0], [7.5, 0.8, 0.0], [9.5, 0.8, 0.0], [10.5, 0.0, 0.0], [12.0, 0.0, 0.0], [13.0, 0.5, 0.0], [15.0, 0.5, 0.0], [16.0, 0.0, 0.0], [18.0, 0.0, 0.0]]}
+      ],
+      "reward_weights": {
+        "speed": 2.5,
+        "yaw": 0.5,
+        "height": 0.4,
+        "upright": 0.6,
+        "stationary": 2.0,
+        "drift": 0.5,
+        "acceleration": 0.8,
+        "wheel_slip": 0.05,
+        "in_place": 0.0,
+        "vertical_velocity": 0.0,
+        "angular_xy": 0.05,
+        "braking": 0.5,
+        "backslide": 0.0,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.8,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.15,
+        "max_yaw_mae_rad_s": 0.15,
+        "min_upright": 0.9,
+        "mean_height_tolerance_m": 0.02,
+        "max_height_deviation_m": 0.04,
+        "max_stop_speed_mps": 0.08,
+        "max_hold_drift_m": 0.15,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15,
+        "min_stop_cycles": 3
+      }
+    },
+    "slope": {
+      "budget": 14000000,
+      "terrain": {"kind": "slope", "length_m": 32.0, "width_m": 4.0, "grade_deg": 35.0, "ramp_start_m": 5.0, "ramp_length_m": 8.0, "crest_length_m": 3.0},
+      "limits": {"forward": 0.5, "backward": 0.3, "yaw": 0.5},
+      "profiles": [
+        {"name": "climb_and_descend", "start": "start", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.5, 0.0], [12.5, 0.5, 0.0], [14.0, 0.0, 0.0], [15.0, 0.0, 0.0], [17.0, -0.3, 0.0], [21.0, -0.3, 0.0], [23.0, 0.0, 0.0], [25.0, 0.0, 0.0]]}
+      ],
+      "reward_weights": {
+        "speed": 2.0,
+        "yaw": 0.3,
+        "height": 1.0,
+        "upright": 0.8,
+        "stationary": 0.5,
+        "drift": 0.0,
+        "acceleration": 0.3,
+        "wheel_slip": 0.15,
+        "in_place": 0.0,
+        "vertical_velocity": 0.1,
+        "angular_xy": 0.05,
+        "braking": 0.1,
+        "backslide": 1.0,
+        "power": 0.0
+      },
+      "overrides": {"over_rated": 0.05},
+      "gate": {
+        "min_pass_rate": 0.8,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.25,
+        "max_yaw_mae_rad_s": 0.2,
+        "min_upright": 0.7,
+        "mean_height_tolerance_m": 0.04,
+        "max_height_deviation_m": 0.08,
+        "max_wheel_slip_mps": 0.4,
+        "max_backslide_mps": 0.2,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15,
+        "min_forward_progress_m": 3.0
+      }
+    },
+    "rough": {
+      "budget": 16000000,
+      "terrain": {"kind": "rough", "length_m": 35.0, "width_m": 5.0, "amplitude_m": 0.04, "wavelength_min_m": 0.3, "wavelength_max_m": 1.0, "max_grade_deg": 35.0},
+      "limits": {"forward": 0.8, "backward": 0.4, "yaw": 0.8},
+      "profiles": [
+        {"name": "rough_forward", "start": "start", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.8, 0.0], [12.0, 0.8, 0.0], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]},
+        {"name": "rough_mixed", "start": "start", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.5, 0.4], [5.0, 0.5, 0.4], [6.0, 0.5, -0.4], [8.0, 0.5, -0.4], [10.0, 0.5, 0.0], [12.0, -0.3, -0.5], [14.0, -0.3, 0.5], [15.0, -0.3, 0.0], [17.0, 0.0, 0.0], [18.0, 0.8, 0.0], [26.0, 0.8, 0.0], [28.0, 0.0, 0.0], [30.0, 0.0, 0.0]]},
+        {"name": "rough_start_stop", "start": "start", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.5, 0.0], [6.0, 0.5, 0.0], [7.0, 0.0, 0.0], [8.0, 0.0, 0.0], [9.0, 0.6, 0.0], [12.0, 0.6, 0.0], [13.0, 0.0, 0.0], [14.0, 0.0, 0.0], [15.0, 0.8, 0.0], [18.0, 0.8, 0.0], [19.0, 0.0, 0.0], [20.0, 0.0, 0.0], [21.0, 0.8, 0.0], [25.0, 0.8, 0.0], [27.0, 0.0, 0.0], [29.0, 0.0, 0.0]]}
+      ],
+      "reward_weights": {
+        "speed": 1.8,
+        "yaw": 0.8,
+        "height": 0.7,
+        "upright": 1.0,
+        "stationary": 0.8,
+        "drift": 0.0,
+        "acceleration": 0.3,
+        "wheel_slip": 0.1,
+        "in_place": 0.0,
+        "vertical_velocity": 0.2,
+        "angular_xy": 0.08,
+        "braking": 0.1,
+        "backslide": 0.2,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.8,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.3,
+        "max_yaw_mae_rad_s": 0.3,
+        "min_upright": 0.7,
+        "mean_height_tolerance_m": 0.04,
+        "max_height_deviation_m": 0.08,
+        "max_wheel_slip_mps": 0.45,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15,
+        "min_forward_progress_m": 8.0
+      }
+    },
+    "roller_obstacle": {
+      "budget": 10000000,
+      "terrain": {
+        "kind": "obstacles",
+        "length_m": 20.0,
+        "width_m": 4.5,
+        "obstacle_count": 6,
+        "min_height_m": 0.02,
+        "max_height_m": 0.05,
+        "min_spacing_m": 2.0,
+        "types": ["box", "cylinder", "capsule"]
+      },
+      "limits": {"forward": 0.5, "backward": 0.4, "yaw": 0.4},
+      "profiles": [
+        {"name": "obstacles_forward", "start": "start", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.5, 0.0], [35.5, 0.5, 0.0], [37.5, 0.0, 0.0], [39.5, 0.0, 0.0]]},
+        {"name": "obstacles_reverse", "start": "end", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, -0.4, 0.0], [43.0, -0.4, 0.0], [45.0, 0.0, 0.0], [47.0, 0.0, 0.0]]}
+      ],
+      "reward_weights": {
+        "speed": 1.5,
+        "yaw": 0.3,
+        "height": 0.2,
+        "upright": 0.5,
+        "stationary": 0.8,
+        "drift": 0.0,
+        "acceleration": 0.3,
+        "wheel_slip": 0.1,
+        "in_place": 0.0,
+        "vertical_velocity": 0.3,
+        "angular_xy": 0.05,
+        "braking": 0.1,
+        "backslide": 0.1,
+        "power": 0.0
+      },
+      "overrides": {"over_rated": 0.05},
+      "events": {"obstacle_pass": 5.0},
+      "gate": {
+        "min_pass_rate": 0.8,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.2,
+        "max_yaw_mae_rad_s": 0.2,
+        "min_upright": 0.65,
+        "mean_height_tolerance_m": 0.04,
+        "max_height_deviation_m": 0.08,
+        "max_wheel_slip_mps": 0.4,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15,
+        "min_obstacle_passes": 6
+      }
+    },
+    "composite": {
+      "budget": 22000000,
+      "terrain": {
+        "kind": "composite",
+        "length_m": 47.5,
+        "width_m": 5.0,
+        "amplitude_m": 0.04,
+        "max_grade_deg": 35.0,
+        "ramp_start_m": 16.0,
+        "ramp_length_m": 8.0,
+        "crest_length_m": 4.0,
+        "obstacle_start_m": 40.0,
+        "obstacle_end_m": 45.5,
+        "obstacle_count": 3,
+        "types": ["box", "cylinder", "capsule"]
+      },
+      "limits": {"forward": 1.5, "backward": 0.4, "yaw": 0.8},
+      "zone_limits": {
+        "flat": {"forward": 1.5, "backward": 0.4, "yaw": 0.8},
+        "rough": {"forward": 0.8, "backward": 0.4, "yaw": 0.8},
+        "slope": {"forward": 0.5, "backward": 0.3, "yaw": 0.5},
+        "crest": {"forward": 0.5, "backward": 0.3, "yaw": 0.5},
+        "slope_down": {"forward": 0.5, "backward": 0.3, "yaw": 0.5},
+        "obstacles": {"forward": 0.5, "backward": 0.4, "yaw": 0.4}
+      },
+      "profiles": [
+        {
+          "name": "composite_route",
+          "start": "start",
+          "points": [
+            [0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 1.5, 0.0], [12.0, 1.5, 0.0],
+            [14.0, 0.0, 0.0], [14.5, 0.8, 0.0], [15.5, 0.8, 0.15],
+            [17.0, 0.8, -0.15], [18.0, 0.8, 0.0], [24.0, 0.8, 0.0],
+            [26.0, 0.0, 0.0], [26.5, 0.6, 0.0], [36.0, 0.6, 0.0],
+            [38.0, 0.0, 0.0], [38.5, 0.6, 0.0], [39.5, 0.6, -0.15],
+            [41.0, 0.6, 0.15], [42.0, 0.6, 0.0], [48.0, 0.6, 0.0],
+            [50.0, 0.0, 0.0], [50.5, 0.8, 0.0], [60.0, 0.8, 0.0],
+            [62.0, 0.0, 0.0], [62.5, 0.6, 0.0], [72.0, 0.6, 0.0],
+            [74.0, 0.0, 0.0], [74.5, 0.6, 0.0], [81.0, 0.6, 0.0],
+            [83.0, 0.6, 0.0], [84.0, 0.0, 0.0], [84.5, -0.4, 0.0],
+            [86.5, -0.4, 0.2], [88.0, 0.0, 0.0], [88.5, 0.0, 0.8],
+            [89.5, 0.0, -0.8], [90.0, 0.0, 0.0]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 1.5,
+        "yaw": 1.0,
+        "height": 0.7,
+        "upright": 0.8,
+        "stationary": 1.0,
+        "drift": 0.3,
+        "acceleration": 0.3,
+        "wheel_slip": 0.08,
+        "in_place": 0.2,
+        "vertical_velocity": 0.15,
+        "angular_xy": 0.05,
+        "braking": 0.2,
+        "backslide": 0.5,
+        "power": 0.0001
+      },
+      "overrides": {"over_rated": 0.15},
+      "events": {"slope_crest": 5.0, "obstacle_pass": 5.0, "finish": 10.0},
+      "gate": {
+        "min_pass_rate": 0.8,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.35,
+        "max_yaw_mae_rad_s": 0.3,
+        "min_upright": 0.65,
+        "mean_height_tolerance_m": 0.04,
+        "max_height_deviation_m": 0.08,
+        "max_wheel_slip_mps": 0.45,
+        "max_backslide_mps": 0.3,
+        "max_wheel_center_offset_m": 0.03,
+        "max_straight_wheel_speed_difference_mps": 0.15,
+        "min_forward_progress_m": 44.0,
+        "min_obstacle_passes": 3,
+        "require_finish": true
+      }
+    }
+  }
+}

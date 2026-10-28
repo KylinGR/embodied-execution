@@ -1,4 +1,4 @@
-"""CAD-based DIABLO with serial motor drives and parallelogram closures."""
+"""CAD-based DIABLO mechanism shared by native MuJoCo and MJLab."""
 
 from copy import deepcopy
 import hashlib
@@ -21,10 +21,36 @@ OBSERVATION_SIGNS = np.array([1.0, 1.0, -1.0, 1.0, 1.0, -1.0])
 PHYSICS_DT = 0.002
 CONTROL_DT = 0.01
 STALL_TORQUE = 17.0
+RATED_TORQUE = 9.6
 NO_LOAD_SPEED = 220 * 2 * np.pi / 60
 
+# Public product page: 22.9 kg including the splice mechanism. The public CAD
+# predates that complete assembly, so preserve its distribution and scale mass.
+OFFICIAL_MASS_KG = 22.9
+TARGET_BASE_HEIGHT_M = 0.270943
+TARGET_WHOLE_HEIGHT_M = 0.37958
+STANDING_SIZE_M = (0.540, 0.371, TARGET_WHOLE_HEIGHT_M)
+MAX_CONTINUOUS_SPEED_MPS = 2.0
 
-def _robot_tree():
+
+def _scale_mass_properties(robot: ET.Element) -> float:
+    masses = [float(node.get("value")) for node in robot.findall(".//inertial/mass")]
+    source_mass = sum(masses)
+    if source_mass <= 0:
+        raise ValueError("Robot source contains invalid mass")
+    # ponytail: only total mass is published; uniform scaling preserves the CAD
+    # distribution. Replace with measured per-link data when hardware calibration
+    # is available.
+    scale = OFFICIAL_MASS_KG / source_mass
+    for node in robot.findall(".//inertial/mass"):
+        node.set("value", str(float(node.get("value")) * scale))
+    for inertia in robot.findall(".//inertial/inertia"):
+        for name in ("ixx", "ixy", "ixz", "iyy", "iyz", "izz"):
+            inertia.set(name, str(float(inertia.get(name)) * scale))
+    return scale
+
+
+def _robot_tree() -> ET.Element:
     source = verify_source()
     robot = ET.parse(source).getroot()
     equivalent = ET.parse(source.with_name("diablo_asm.urdf")).getroot()
@@ -36,6 +62,8 @@ def _robot_tree():
             (f"{side}_wheel_joint", f"{side}_wheel_motor", "continuous"),
         ):
             joint = robot.find(f"joint[@name='{old}']")
+            if joint is None:
+                raise ValueError(f"Missing expected joint {old}")
             joint.set("name", new)
             joint.set("type", kind)
             axis = joint.find("axis")
@@ -55,7 +83,10 @@ def _robot_tree():
                     effort=str(STALL_TORQUE),
                     velocity=str(NO_LOAD_SPEED),
                 )
+
         branch = deepcopy(equivalent.find(f"link[@name='{side}_fake_shank_link']"))
+        if branch is None:
+            raise ValueError(f"Missing equivalent branch for {side}")
         branch.set("name", f"{side}_parallel_link")
         branch.find("inertial/origin").set(
             "xyz", f"0.072113 0.016825 {'-0.008' if side == 'left' else '0.008'}"
@@ -68,33 +99,41 @@ def _robot_tree():
         ET.SubElement(joint, "child", link=f"{side}_parallel_link")
         ET.SubElement(joint, "origin", xyz="0.09 0 0", rpy="0 0 -2.8729")
         ET.SubElement(joint, "axis", xyz="0 0 1")
+
     for mesh in robot.findall(".//mesh"):
         mesh.set("filename", str((source.parent / mesh.get("filename")).resolve()))
+    _scale_mass_properties(robot)
     extension = ET.SubElement(robot, "mujoco")
     ET.SubElement(extension, "compiler", fusestatic="false", discardvisual="false")
     return robot
 
 
-def make_model():
-    spec = mujoco.MjSpec.from_string(ET.tostring(_robot_tree(), encoding="unicode"))
+def make_robot_spec(*, include_floor: bool, include_actuators: bool):
+    """Build a fresh MJCF spec for either native MuJoCo or MJLab."""
+    spec = mujoco.MjSpec.from_string(
+        ET.tostring(_robot_tree(), encoding="unicode")
+    )
     base = spec.body("diablo_base_link")
     base.add_freejoint(name="floating_base")
-    base.pos = [0, 0, 0.4]
+    base.pos = [0, 0, TARGET_BASE_HEIGHT_M]
     spec.option.timestep = PHYSICS_DT
     spec.option.gravity = [0, 0, -9.81]
     spec.option.iterations = 80
     spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
     spec.option.disableflags |= mujoco.mjtDisableBit.mjDSBL_AUTORESET
-    spec.worldbody.add_geom(
-        name="floor",
-        type=mujoco.mjtGeom.mjGEOM_PLANE,
-        size=[20, 20, 0.1],
-        rgba=[0.23, 0.26, 0.30, 1],
-        contype=2,
-        conaffinity=1,
-        friction=[0.8, 0.005, 0.0001],
-    )
-    spec.worldbody.add_light(pos=[0, -3, 4], dir=[0, 0, -1])
+
+    if include_floor:
+        spec.worldbody.add_geom(
+            name="floor",
+            type=mujoco.mjtGeom.mjGEOM_PLANE,
+            size=[20, 20, 0.1],
+            rgba=[0.23, 0.26, 0.30, 1],
+            contype=2,
+            conaffinity=1,
+            friction=[0.8, 0.005, 0.0001],
+        )
+        spec.worldbody.add_light(pos=[0, -3, 4], dir=[0, 0, -1])
+
     site = base.add_site(name="body_imu", size=[0.005] * 3)
     for name, kind in (
         ("gyro", mujoco.mjtSensor.mjSENS_GYRO),
@@ -103,6 +142,7 @@ def make_model():
         spec.add_sensor(
             name=name, type=kind, objtype=mujoco.mjtObj.mjOBJ_SITE, objname=site.name
         )
+
     for side in ("left", "right"):
         spec.body(f"{side}_parallel_link").add_site(
             name=f"{side}_loop_a", pos=[0.14, 0, 0], size=[0.002] * 3
@@ -119,6 +159,7 @@ def make_model():
             solref=[0.004, 1],
             solimp=[0.99, 0.999, 0.001, 0.5, 2],
         )
+
     for joint in spec.joints:
         if "passive" in joint.name:
             joint.damping = [0.001, 0, 0]
@@ -126,21 +167,27 @@ def make_model():
         joint = spec.joint(name)
         joint.damping = [0.05, 0, 0]
         joint.armature = 0.01
-        spec.add_actuator(
-            name=name + "_actuator",
-            trntype=mujoco.mjtTrn.mjTRN_JOINT,
-            target=name,
-            gear=[1, 0, 0, 0, 0, 0],
-            ctrllimited=True,
-            ctrlrange=[-STALL_TORQUE, STALL_TORQUE],
-            forcelimited=True,
-            forcerange=[-STALL_TORQUE, STALL_TORQUE],
-        )
+        if include_actuators:
+            spec.add_actuator(
+                name=name + "_actuator",
+                trntype=mujoco.mjtTrn.mjTRN_JOINT,
+                target=name,
+                gear=[1, 0, 0, 0, 0, 0],
+                ctrllimited=True,
+                ctrlrange=[-STALL_TORQUE, STALL_TORQUE],
+                forcelimited=True,
+                forcerange=[-STALL_TORQUE, STALL_TORQUE],
+            )
+
     for geom in spec.geoms:
         if geom.name != "floor" and (geom.contype or geom.conaffinity):
             geom.contype, geom.conaffinity = 1, 2
             geom.friction = [0.8, 0.005, 0.0001]
-    model = spec.compile()
+    return spec
+
+
+def make_model():
+    model = make_robot_spec(include_floor=True, include_actuators=True).compile()
     model.vis.global_.offwidth, model.vis.global_.offheight = 960, 720
     return model
 
@@ -163,10 +210,11 @@ def closure_errors(model, data):
     return [
         float(
             np.linalg.norm(
-                data.site(f"{s}_loop_a").xpos - data.site(f"{s}_loop_b").xpos
+                data.site(f"{side}_loop_a").xpos
+                - data.site(f"{side}_loop_b").xpos
             )
         )
-        for s in ("left", "right")
+        for side in ("left", "right")
     ]
 
 
@@ -179,13 +227,20 @@ def metadata(model):
         "upstream_commit": lock["commit"],
         "mechanism_commit": lock["mechanism"]["commit"],
         "mechanism_sha256": hashlib.sha256(mechanism_path().read_bytes()).hexdigest(),
-        "model_scope": "CAD reference with two explicit parallelogram closures; not hardware calibrated",
+        "model_scope": (
+            "CAD reference with explicit parallelogram closures; total mass "
+            "uniformly normalized to the public 22.9 kg product specification"
+        ),
         "joints": list(JOINTS),
         "actuators": model.nu,
         "closure_constraints": model.neq,
         "default_joint_rad": DEFAULT_Q.tolist(),
         "observation_velocity_signs": OBSERVATION_SIGNS.tolist(),
         "mass_kg": float(model.body_mass.sum()),
+        "target_base_height_m": TARGET_BASE_HEIGHT_M,
+        "target_whole_height_m": TARGET_WHOLE_HEIGHT_M,
+        "standing_size_m": list(STANDING_SIZE_M),
+        "max_continuous_speed_mps": MAX_CONTINUOUS_SPEED_MPS,
         "physics_dt_s": PHYSICS_DT,
         "control_dt_s": CONTROL_DT,
         "simulation_only": True,
@@ -193,8 +248,11 @@ def metadata(model):
         "motor_reference": {
             "source": "arXiv:2407.21500 Table II",
             "stall_nm": STALL_TORQUE,
+            "rated_nm": RATED_TORQUE,
             "no_load_rad_s": NO_LOAD_SPEED,
-            "rated_nm": 9.6,
         },
-        "limits_scope": "Published reference motor, assumed linear torque-speed envelope; not firmware/thermal calibration",
+        "limits_scope": (
+            "Published reference motor envelope; not firmware, thermal, or "
+            "hardware-zero calibration"
+        ),
     }

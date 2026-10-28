@@ -1,4 +1,4 @@
-"""DIABLO flat-ground Gymnasium environment with measured proprioception."""
+"""CPU-only DIABLO physics fixture; not a training or qualification path."""
 
 from dataclasses import dataclass
 
@@ -15,6 +15,7 @@ from .model import (
     LEGS,
     OBSERVATION_SIGNS,
     PHYSICS_DT,
+    TARGET_BASE_HEIGHT_M,
     closure_errors,
     make_model,
     set_pose,
@@ -24,7 +25,7 @@ from .model import (
 @dataclass
 class Config:
     episode_seconds: float = 20.0
-    max_speed: float = 0.5
+    max_speed: float = 2.0
     observation_noise: bool = False
     action_mode: str = "position_velocity"
 
@@ -157,42 +158,11 @@ class DiabloEnv(gym.Env):
         )
         if not np.isfinite(self.speed) or abs(self.speed) > self.config.max_speed:
             raise ValueError("Requested speed is outside the configured command range")
-        self.data.qpos[2] = 0.4
+        self.data.qpos[2] = TARGET_BASE_HEIGHT_M
         self.data.qpos[3:7] = [1, 0, 0, 0]
         set_pose(self.model, self.data, DEFAULT_Q)
         mujoco.mj_forward(self.model, self.data)
-        wheel_geoms = [
-            i
-            for i in range(self.model.ngeom)
-            if self.model.geom_contype[i]
-            and self.model.body(self.model.geom_bodyid[i]).name
-            in ("left_wheel", "right_wheel")
-        ]
-        bottoms = []
-        for i in wheel_geoms:
-            if self.model.geom_type[i] == mujoco.mjtGeom.mjGEOM_CYLINDER:
-                axis = self.data.geom_xmat[i].reshape(3, 3)[:, 2]
-                radius, halfwidth = self.model.geom_size[i, :2]
-                support = radius * np.sqrt(
-                    max(0.0, 1 - axis[2] ** 2)
-                ) + halfwidth * abs(axis[2])
-                bottoms.append(float(self.data.geom_xpos[i, 2] - support))
-            else:
-                mesh = self.model.geom_dataid[i]
-                first, count = (
-                    self.model.mesh_vertadr[mesh],
-                    self.model.mesh_vertnum[mesh],
-                )
-                vertices = self.model.mesh_vert[first : first + count]
-                world = (
-                    vertices @ self.data.geom_xmat[i].reshape(3, 3).T
-                    + self.data.geom_xpos[i]
-                )
-                bottoms.append(float(world[:, 2].min()))
-        bottom = min(bottoms)
-        self.data.qpos[2] += 0.005 - bottom
-        mujoco.mj_forward(self.model, self.data)
-        self.reference_height = float(self.data.xpos[self.base_id, 2])
+        self.reference_height = TARGET_BASE_HEIGHT_M
         self.gravity_estimate[:] = [0, 0, -1]
         self.previous_action[:] = 0
         self.stop_origin = None

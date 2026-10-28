@@ -1,31 +1,30 @@
-# DIABLO 训练资源
+# 资源与来源
 
-核对日期：2026-10-19。以下区分物理资产、训练代码、SDK和策略权重。
+核对日期：2026-10-28。
 
-| 资源 | 用途 | 本项目的处理 |
+| 资源 | 用途 | 本项目处理 |
 |---|---|---|
-| [厂家开发者入口](https://github.com/DDTRobot) | 官方维护与推荐项目分类 | 查找正式接口；推荐项目不等于官方维护 |
-| [DIABLO强化学习示例](https://github.com/DDTRobot/Col_DIABLO_Issac_RL) | Isaac Gym代码、URDF、网格、动作映射参考 | 只拉取固定提交的模型资产；不安装Isaac Gym |
-| [原作者项目](https://github.com/L-SY/wheeled_bipedal_gym) | 训练示例原始来源 | 保留作者与来源 |
-| [Wheel-Legged-Gym](https://github.com/clearlab-sustech/Wheel-Legged-Gym) | 上游算法/环境来源 | 参考资料，不作为运行依赖 |
-| [官方Webots环境](https://github.com/DDTRobot/diablo-sim-env) | 闭环连杆、物理模型、仿真场景参考 | 固定提交，用于恢复电机轴向、回程支链和闭环；其README说明没有提供控制器 |
-| [DIABLO论文](https://arxiv.org/html/2407.21500v1) | 机构、直驱电机参数与物理控制分析 | 几何/电机参考，不把论文样机参数当你的实机标定 |
-| [ROS2 SDK](https://github.com/DDTRobot/diablo_ros2) | 运动模式、传感器与六电机状态 | 参考资料，本项目不连接ROS或电机 |
-| [ROS1 SDK](https://github.com/DDTRobot/diablo_sdk) | 机器人控制与通信 | 参考资料 |
-| [MuJoCo建模文档](https://mujoco.readthedocs.io/en/stable/modeling.html) | URDF/MJCF、接触、执行器 | 本项目物理平台 |
-| [Gymnasium环境接口](https://gymnasium.farama.org/introduction/create_custom_env/) | reset/step/终止语义 | 本项目环境接口 |
-| [Stable-Baselines3 PPO](https://stable-baselines3.readthedocs.io/en/master/modules/ppo.html) | PPO、向量环境、保存重载 | 本项目使用其成熟实现，不重写PPO |
+| [用户提供的刑天说明书](https://flbook.com.cn/v/Il0Y7WuaLU?cckey=c124f578) | 产品与操作说明 | 页面启用人机验证；未自动绕过，参数以可访问的官网页和公开代码复核 |
+| [本末刑天产品页](https://robotics.directdrive.com/products/xingtian-robot/1653337674873306) | 官方质量、速度、负载和整机版本 | 22.9 kg 用于质量归一化；尺寸版本差异单独记录 |
+| [厂家 RL 示例](https://github.com/DDTRobot/Col_DIABLO_Issac_RL) | CAD URDF、网格、惯量 | 固定提交后只读取所需资产 |
+| [官方 Webots 环境](https://github.com/DDTRobot/diablo-sim-env) | 髋膝串联、回程支链、闭环 | 固定提交后用于机构校核 |
+| [DIABLO 论文](https://arxiv.org/html/2407.21500v1) | 机构及 M1502D 电机参考 | 用于 17 Nm / 23.038 rad/s 等公开参数 |
+| [MJLab](https://github.com/mujocolab/mjlab) | GPU 物理训练、管理器式任务、RSL-RL | 固定 `1.6.0` |
+| [MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp) | GPU 批量物理 | 通过 MJLab 的 `~=3.11.0` 依赖 |
+| [MuJoCo](https://mujoco.readthedocs.io/) | CPU 模型编译和机构校核 | 固定 `3.11.0` |
+| [RSL-RL](https://github.com/leggedrobotics/rsl_rl) | PPO Actor/Critic | 使用 MJLab 锁定的 `5.4.2` |
 
-## 当前能下载哪些策略？
+## 当前不提供的内容
 
-检查到的DIABLO训练示例主分支没有`.pt/.onnx`预训练权重，[Release为空](https://github.com/DDTRobot/Col_DIABLO_Issac_RL/releases)。本项目也不将随机初始化或短训练检查点标为成熟策略。
+- 没有可下载的刑天预训练策略；
+- 没有实机电机零位、驱动固件、热模型和通信延迟标定；
+- 没有宣称 491 mm 官网版本与课程 379.58 mm CAD 版本完全一致；
+- 没有将论文样机或公开 CAD 参数当作已称重实机。
 
-官方SDK提供`jump_mode`等模式接口，但这不等于开放跳跃网络权重、训练配方或指定落点控制。DIABLO关节级接口的可用性需要向厂家技术支持确认。
+## 为什么只保留 GPU 训练路径
 
-## 为什么不直接运行 `diablo_vmc`？
+旧单环境训练让 MuJoCo 状态、奖励和采样围绕 Python 对象逐环境推进，无法让物理、观测、奖励和 PPO 采样一起运行在 MuJoCo Warp 批处理上。项目已统一使用 MJLab + RSL-RL；CPU MuJoCo 只做校核。
 
-该上游实验任务的观测拼接实际为27维，而配置继承25维；其动作语义也与普通关节位置任务不同。这里只记录该源码问题，不把未经验证的入口暴露给新手。
+## 文档来源边界
 
-本项目从MuJoCo环境开始提供独立、已明确的125维历史输入与6维动作契约，详见[模型接口](model-interface.md)。
-
-公开CAD总质量、轮径与论文样机不同；本项目保留这种差异并记录来源，不拼成一套未经说明的硬件参数。没有获得厂家电机零位/固件限制时，验收范围止于公开参考仿真。
+用户提供的 flbook 说明书链接启用了交互式人机验证，未自动绕过。参数核对使用了本末机器人官网公开产品页和厂商公开代码/论文。若后续拿到说明书中的具体硬件版本参数，应新增带版本的模型配置，而不是覆盖现有契约。

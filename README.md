@@ -1,97 +1,112 @@
-# 具身执行 · Embodied Execution
+# 具身执行 · 刑天 DIABLO GPU 运动训练
 
-面向团队的 **DIABLO 双轮足机器人 MuJoCo 运动训练环境**。提供公开机构模型适配、Gymnasium环境、训练/续训、评估、可视化和ONNX/TorchScript导出。默认CPU，无需Isaac Gym、ROS或机器人硬件。你可以自行定义任务、奖励和训练策略。
+面向刑天 DIABLO 双轮足机器人的 MJLab 分阶段运动学习工程。训练使用 MuJoCo Warp 在 NVIDIA GPU 上并行仿真，并通过 RSL-RL PPO 更新策略；CPU MuJoCo 环境只用于机构、传感器和状态机回归。
 
-![MuJoCo中的DIABLO模型初始姿态](docs/images/diablo-mujoco.png)
+![MuJoCo中的DIABLO模型](docs/images/diablo-mujoco.png)
 
-图为物理模型初始姿态，不是已训练策略演示。
+## 项目功能
 
-v0.2已按公开CAD、官方Webots和论文校核串联髋膝电机、平行四边形闭环、电机轴向及轮子前进方向；修正机体速度坐标。**这是公开参考仿真，不是已标定实机**：质量/轮径与论文存在版本差异，未获得你的硬件零位及驱动参数。没有附带成熟运动策略。
+- 从公开 CAD 和 Webots 机构构建六主动关节、四被动关节及两个平行四边形闭环。
+- 保留六个电机、IMU、轮地接触和地形射线感知；总质量归一化为官网 22.9 kg。
+- 提供 18 个 MJLab 阶段任务：平衡、0.2–2.0 m/s 速度阶梯、平地综合运动、转向、多次启停、35° 坡、崎岖地形、碾压障碍和综合路线。
+- 奖励和 gate 直接读取任务课程 JSON，包括速度、偏航、高度、姿态、启停、轮滑、轮同步、后滑和障碍事件。
+- 最终综合阶段从全部周期 checkpoint 中执行 3 种子初筛、5 个新种子复筛，并保存 `policy-best.pt` / `policy-best.onnx`。
+- 保留 CPU 机构校核；旧单线程训练、评估、续训和示例路径已移除。
 
-## 开始训练
+## 环境要求
 
-需要Linux、Git和Python **3.11或3.12**。不要求NVIDIA GPU；完整步骤见[中文教程](docs/tutorial.md)。
+- Linux x86_64
+- Python 3.11 或 3.12
+- NVIDIA GPU 和与所选 PyTorch CUDA wheel 兼容的驱动
+- Git 和能够访问模型原始仓库、PyPI、PyTorch 下载站的网络
+
+## 安装与检查
 
 ```bash
 git clone https://github.com/KylinGR/embodied-execution.git
 cd embodied-execution
 bash scripts/setup.sh
 source .venv/bin/activate
-
-# 机构、驱动方向、传感器及Gymnasium接口校核
-diablo doctor
-
-# 首轮短训练，只确认工具链
-diablo train --steps 2048 --n-envs 4 --output runs/first-train
-
-# 每个任务运行首个回合；跌倒保留证据，退出码2
-diablo evaluate --model runs/first-train/policy.zip --output runs/first-evaluate
-
-# 用实际回放观测验证导出的动作
-diablo export --model runs/first-train/policy.zip \
-  --observations runs/first-evaluate/trajectory.npz --output runs/first-export
 ```
 
-每次输出目录必须是新的。默认平地任务为平衡、单次起停、变速、重复起停。当前不提供越野、跳跃、爬行课程或硬件部署；这些需要另写任务和对应评测。
-
-## 自己定训练策略
+安装流程会获取固定提交的机器人模型与 Webots 机构资源，然后执行：
 
 ```bash
-# 直接力矩动作及PPO参数由JSON配置，不依赖默认PD动作
-diablo train --config examples/torque.json --steps 2048 --output runs/torque-train
-
-# 改任务和奖励：继承环境，物理、传感器、时序复用
-export PYTHONPATH="$PWD/examples${PYTHONPATH:+:$PYTHONPATH}"
-diablo train --config examples/custom.json --steps 2048 --output runs/custom-train
+diablo doctor
+diablo gpu-doctor
+diablo list-stages --n-envs 4096
 ```
 
-[自定义教程](docs/tutorial.md#自定义任务奖励和算法)说明如何替换奖励、指令、网络及算法。基础Gymnasium环境可直接交给其他RL算法。模型/控制/观测指纹会拒绝不兼容检查点，包括旧版v0.1。
+`doctor` 验证 CPU 机构模型；`gpu-doctor` 验证 CUDA、MuJoCo Warp、MJLab、观测形状和一次 GPU 物理步。缺少 CUDA 时程序会明确失败，不会静默使用 CPU 训练。
 
-## 教程与资源
+## 分阶段训练
 
-- [安装、训练、回放、续训、看曲线、自定义与排错](docs/tutorial.md)
-- [模型来源、机构、电机映射、输入输出和时序](docs/model-interface.md)
-- [官方资源、开源策略与SDK边界](docs/resources.md)
-- [许可证与资源再分发边界](THIRD_PARTY.md)
+运行完整课程：
 
-## 实际验证
+```bash
+diablo course-train \
+  --n-envs 4096 \
+  --gpu-ids 0 \
+  --log-root logs/rsl_rl
+```
 
-可重复的完整检查命令：
+每个前置阶段完成后，脚本会用验证种子 `2001–2003` 检查最后一个 checkpoint。只有全部 profile 和全部 gate 都通过，才把该权重作为下一阶段的初始化参数。默认总课程预算与迭代数由 JSON 中的预算自动计算。
+
+单独训练一个阶段：
+
+```bash
+diablo train --stage flat_balance --n-envs 4096 --gpu-ids 0
+```
+
+从上一阶段 checkpoint 继续：
+
+```bash
+diablo train \
+  --stage flat_motion_020 \
+  --resume logs/rsl_rl/diablo_xingtian_course/<run>/model_<iter>.pt
+```
+
+## 最佳权重筛选
+
+`composite` 阶段默认每 10 次迭代保存一个 checkpoint。单独执行筛选：
+
+```bash
+diablo select-best \
+  --run-dir logs/rsl_rl/diablo_xingtian_course/<run> \
+  --device cuda:0
+```
+
+筛选规则：
+
+1. 所有 `model_*.pt` 使用验证种子 `2001–2003`；任一 seed 未通过全部 gate 即淘汰。
+2. 通过初筛者使用不重叠种子 `2004–2008`；五个 seed 必须全部通过。
+3. 使用完成度 25%、速度/转向 25%、姿态/高度 25%、坡面/障碍 15%、轮滑/效率 10% 的综合 gate 分数排序。
+4. 最优 checkpoint 复制为 `policy-best.pt`，并生成 `policy-best.onnx` 和完整 `selection.json`。
+5. 选择完成后使用盲测种子 `3101–3110` 和边界种子 `4101–4103` 报告泛化结果，后两类种子不参与选择。
+
+## 评估与导出
+
+```bash
+diablo evaluate \
+  --stage composite \
+  --checkpoint <run>/policy-best.pt \
+  --seeds 2001,2002,2003
+
+diablo export \
+  --stage composite \
+  --checkpoint <run>/policy-best.pt \
+  --output runs/export
+```
+
+Actor 输入为 `[B,160]`（125 维本体历史和 35 维地形扫描），输出为六维归一化动作。导出的 ONNX 是仿真训练接口，不是刑天实机控制器；`hardware_authorized=false`。
+
+## 验证
 
 ```bash
 bash scripts/check_training.sh
+DIABLO_GPU_CHECK=1 bash scripts/check_training.sh
 ```
 
-它创建新的`runs/check-*`，集中完成测试、机构检查、随机动作、训练、续训、四任务首回合评估、实际轨迹导出。评估中的跌倒如实记录，不作为环境安装故障或运动成功。GitHub Actions还检查全新依赖安装和离开源码目录后的wheel安装。
+第一条执行语法、公开课程、CPU 机构和统计逻辑检查。第二条还执行 GPU smoke、短 PPO、checkpoint 重载和 ONNX 导出。完整 184M transition 训练和使用 blind seeds 通过 gate 是独立的人工验收步骤。
 
-2026-10-19，Linux / Python3.11.16 / MuJoCo3.8.1 / Gymnasium1.4.0 / SB3 2.9.0 / PyTorch2.11.0，CPU：
-
-| 检查 | 实际结果 |
-|---|---|
-| 机构独立FK、闭环、虚功 | 12组姿态；最大误差分别1.33e-7 m、1.22e-16 m、2.55e-9 Nm |
-| 物理/坐标/时序/接口/故障检查 | 10项测试和Gymnasium检查通过 |
-| PPO→续训 | 2,048+512 transition，墙钟约2+1秒；两次参数均更新 |
-| 重载首回合评估 | 四任务均0.75秒跌倒，尚未进入起步；总计3秒仿真 |
-| ONNX/TorchScript | 256条实际仿真观测；最大动作误差1.04e-7 / 0 |
-
-结果证明环境与训练流程可运行，**不证明已学会稳定运动，也不是长时验证**。原始日志和失败轨迹保留于本地`runs/check-20261019T034506-YZ3GIT`；CI短验收证据由Actions保留14天，不作为预训练权重发布。Python3.12允许安装，本地实测为3.11。
-
-## 项目结构
-
-```text
-diablo_training/model.py          CAD → MuJoCo、闭环、IMU、执行器
-diablo_training/control.py        电机坐标、PD/力矩动作、转速包络
-diablo_training/env.py            Gymnasium、传感观测、历史与任务钩子
-diablo_training/validation.py     独立公开机构和驱动校核
-diablo_training/contract.py       检查点兼容校验
-diablo_training/cli.py            训练、续训、回放、导出
-diablo_training/upstream.lock.json 固定原始资源版本
-examples/                        配置和自定义任务示例
-scripts/                         安装与完整流程检查
-tests/                           物理和接口回归检查
-docs/                            中文教程
-runs/                            实验和失败证据，不提交
-third_party/                     原始模型仓库，不提交
-```
-
-仓库公开，方便团队获取和审查；内部数据与设备凭据不随仓库分发。
+详细说明见 [训练文档](docs/tutorial.md)，模型接口见 [模型契约](docs/model-interface.md)。

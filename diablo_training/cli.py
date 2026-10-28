@@ -1,26 +1,29 @@
-"""Fetch, check, train, evaluate and export a simulation-only DIABLO policy."""
+"""Fetch assets, validate physics, train, evaluate, select, and export policies."""
+
+from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 from datetime import datetime, timezone
-import hashlib
 import importlib.metadata
 import json
 from pathlib import Path
 import platform
+import subprocess
 import sys
 import time
 
-import numpy as np
-
-from .resources import ROOT, fetch, source_path
-
-
-def write_json(path, content):
-    path.write_text(json.dumps(content, ensure_ascii=False, indent=2) + "\n")
+from .contract import SCREEN_SEEDS, budget_iterations, load_course, task_id
+from .resources import ROOT, fetch
 
 
-def fresh_directory(requested, kind):
+def write_json(path: Path, content: object) -> None:
+    path.write_text(
+        json.dumps(content, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+
+
+def fresh_directory(requested: Path | None, kind: str) -> Path:
     path = (
         requested
         or ROOT
@@ -32,22 +35,26 @@ def fresh_directory(requested, kind):
     return path
 
 
-def versions():
-    return {
-        name: importlib.metadata.version(name)
-        for name in ("mujoco", "gymnasium", "stable-baselines3", "torch", "numpy")
-    }
+def versions() -> dict[str, str]:
+    names = ("mujoco", "mjlab", "mujoco-warp", "torch", "rsl-rl-lib")
+    result = {}
+    for name in names:
+        try:
+            result[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            result[name] = "not-installed"
+    return result
 
 
-def doctor(args):
-    from stable_baselines3.common.env_checker import check_env
+def doctor(args) -> None:
+    from gymnasium.utils.env_checker import check_env
     from .env import DiabloEnv
     from .model import metadata
     from .validation import validate_model
 
     env = DiabloEnv()
     try:
-        check_env(env, warn=True)
+        check_env(env, skip_render_check=True)
         result = {
             "python": platform.python_version(),
             "platform": platform.system(),
@@ -57,7 +64,8 @@ def doctor(args):
             "action_shape": list(env.action_space.shape),
             "gymnasium_check": "passed",
             "mechanics": validate_model(),
-            "training_verified": False,
+            "training_backend": "mjlab",
+            "scope": "CPU physics fixture only; no CPU training fallback",
         }
         if args.render:
             env.reset(seed=0)
@@ -67,453 +75,391 @@ def doctor(args):
         env.close()
 
 
-def smoke(args):
-    from .env import DiabloEnv
-
-    out = fresh_directory(args.output, "smoke")
-    env = DiabloEnv()
-    began = time.monotonic()
-    episodes = []
-    try:
-        obs, _ = env.reset(seed=args.seed)
-        env.action_space.seed(args.seed)
-        with (out / "trace.jsonl").open("x") as log:
-            for i in range(args.steps):
-                obs, _, terminated, truncated, info = env.step(
-                    env.action_space.sample() * 0.1
-                )
-                if not np.isfinite(obs).all():
-                    raise FloatingPointError("Nonfinite observation")
-                log.write(json.dumps(info) + "\n")
-                if terminated or truncated:
-                    episodes.append(
-                        {**info, "terminated": terminated, "truncated": truncated}
-                    )
-                    env.reset()
-        result = {
-            "control_steps": args.steps,
-            "integrated_sim_seconds": args.steps * 0.01,
-            "wall_seconds": time.monotonic() - began,
-            "episodes": episodes,
-            "physics_pipeline": "passed",
-            "policy_training": "not run",
-            "note": "Normal training episode resets are recorded; this is not a locomotion qualification.",
-        }
-        write_json(out / "result.json", result)
-        print(json.dumps({"output": str(out), **result}, ensure_ascii=False))
-    finally:
-        env.close()
-
-
-def parameter_digest(policy):
-    state = b"".join(p.detach().cpu().numpy().tobytes() for p in policy.parameters())
-    return hashlib.sha256(state).hexdigest()
-
-
-def train(args):
+def gpu_doctor(args) -> None:
     import torch
-    from stable_baselines3 import PPO
-    from stable_baselines3.common.callbacks import CheckpointCallback
-    from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
-    from .env import Config
-    from .model import metadata
-    from .contract import (
-        environment_class,
-        policy_contract,
-        require_compatible,
-        require_checkpoint,
-    )
+    from mjlab.envs import ManagerBasedRlEnv
+    from .mjlab_tasks import COURSE, get_task_cfgs, require_cuda
 
-    torch.set_num_threads(1)
-    out = fresh_directory(args.output, "train")
-    settings = {
-        "n_steps": 128,
-        "batch_size": 64,
-        "n_epochs": 4,
-        "learning_rate": 3e-4,
-        "gamma": 0.99,
-        "gae_lambda": 0.95,
-        "ent_coef": 0.01,
-        "policy_kwargs": {"net_arch": [128, 128]},
-    }
-    task_class = "diablo_training.env:DiabloEnv"
-    if args.resume:
-        previous = json.loads(
-            configuration_path(Path(args.resume).resolve()).read_text()
-        )
-        config = Config(**previous["environment"])
-        task_class = previous.get("environment_class", task_class)
-        settings = previous["ppo"]
-        if args.config:
-            raise ValueError("Resume inherits its saved config; do not supply --config")
-        if (args.max_speed is not None and args.max_speed != config.max_speed) or (
-            args.noise and not config.observation_noise
-        ):
-            raise ValueError(
-                "Resume keeps the saved environment; start a new experiment to change it"
-            )
-    else:
-        supplied = json.loads(args.config.read_text()) if args.config else {}
-        if set(supplied) - {"environment", "ppo", "environment_class"}:
-            raise ValueError("Config keys: environment, ppo, environment_class")
-        parameters = supplied.get("environment", {}).copy()
-        if args.max_speed is not None:
-            parameters["max_speed"] = args.max_speed
-        if args.noise:
-            parameters["observation_noise"] = True
-        config = Config(**parameters)
-        settings.update(supplied.get("ppo", {}))
-        if set(settings) & {
-            "env",
-            "policy",
-            "device",
-            "seed",
-            "verbose",
-            "tensorboard_log",
-        }:
-            raise ValueError("Use CLI options for environment, seed and device")
-        task_class = supplied.get("environment_class", task_class)
-    cls = environment_class(task_class)
-    env = VecMonitor(
-        DummyVecEnv([lambda: cls(config) for _ in range(args.n_envs)]),
-        filename=str(out / "episodes.csv"),
-    )
-    model = None
-    began = time.monotonic()
+    device = require_cuda(args.device)
+    env_cfg, _ = get_task_cfgs("flat_balance", play=True)
+    env_cfg.scene.num_envs = 1
+    env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
     try:
-        contract = policy_contract(env.venv.envs[0])
-        if args.resume:
-            require_compatible(previous, env.venv.envs[0])
-        model = (
-            PPO.load(
-                args.resume,
-                env=env,
-                device=args.device,
-                tensorboard_log=str(out / "tensorboard"),
-            )
-            if args.resume
-            else PPO(
-                "MlpPolicy",
-                env,
-                **settings,
-                device=args.device,
-                seed=args.seed,
-                verbose=1,
-                tensorboard_log=str(out / "tensorboard"),
-            )
-        )
-        if args.resume:
-            require_checkpoint(model, previous)
-        model.diablo_contract_sha256 = contract["sha256"]
-        before = parameter_digest(model.policy)
-        starting_timesteps = model.num_timesteps
-        _, lock = source_path()
-        resolved = {
-            "environment": asdict(config),
-            "environment_class": task_class,
-            "contract": contract,
-            "ppo": settings,
-            "model": metadata(env.venv.envs[0].model),
-            "upstream_commit": lock["commit"],
+        obs, _ = env.reset(seed=2001)
+        action = env.action_manager.action.new_zeros((1, 6))
+        obs, reward, terminated, truncated, _ = env.step(action)
+        result = {
+            "device": device,
+            "gpu": torch.cuda.get_device_name(torch.device(device)),
             "versions": versions(),
-            "requested_timesteps": args.steps,
-            "n_envs": args.n_envs,
-            "seed": model.seed,
-            "device": str(model.device),
-            "resume": None if args.resume is None else str(Path(args.resume).resolve()),
-            "parameter_sha256_before": before,
-        }
-        write_json(out / "resolved.json", resolved)
-        callback = CheckpointCallback(
-            save_freq=max(1, 100000 // args.n_envs), save_path=str(out / "checkpoints")
-        )
-        model.learn(
-            total_timesteps=args.steps,
-            callback=callback,
-            reset_num_timesteps=not bool(args.resume),
-        )
-        model.save(out / "policy.zip")
-        after = parameter_digest(model.policy)
-        result = {
-            "actual_total_timesteps": model.num_timesteps,
-            "actual_additional_timesteps": model.num_timesteps - starting_timesteps,
-            "requested_additional_timesteps": args.steps,
-            "wall_seconds": time.monotonic() - began,
-            "parameters_changed": before != after,
-            "parameter_sha256_after": after,
-            "policy": "policy.zip",
-            "scope": "PPO training completed; evaluate locomotion separately",
-        }
-        write_json(out / "result.json", result)
-        print(json.dumps({"output": str(out), **result}))
-    except BaseException as error:
-        if model is not None:
-            model.save(out / "failure-policy.zip")
-        write_json(
-            out / "failure.json",
-            {
-                "type": type(error).__name__,
-                "message": str(error),
-                "wall_seconds": time.monotonic() - began,
+            "task_count": len(COURSE.order),
+            "observation_shapes": {
+                name: list(value.shape) for name, value in obs.items()
             },
-        )
-        raise
+            "action_shape": list(action.shape),
+            "finite_reward": bool(reward.isfinite().all().item()),
+            "terminated": bool(terminated.item()),
+            "truncated": bool(truncated.item()),
+            "scope": "one environment, one zero-action physics step",
+        }
+        print(json.dumps(result, indent=2, ensure_ascii=False))
     finally:
         env.close()
 
 
-def configuration_path(path):
-    candidates = [path.parent / "resolved.json"]
-    if path.parent.name == "checkpoints":
-        candidates.append(path.parent.parent / "resolved.json")
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError("resolved.json must accompany the training checkpoint")
-
-
-def load_policy(path):
-    from stable_baselines3 import PPO
-    from .env import Config
-    from .contract import environment_class, require_compatible, require_checkpoint
-
-    path = Path(path).resolve()
-    resolved = json.loads(configuration_path(path).read_text())
-    config = Config(**resolved["environment"])
-    env = environment_class(
-        resolved.get("environment_class", "diablo_training.env:DiabloEnv")
-    )(config)
-    try:
-        require_compatible(resolved, env)
-    finally:
-        env.close()
-    policy = PPO.load(path, device="cpu")
-    require_checkpoint(policy, resolved)
-    return policy, config, resolved
-
-
-def evaluate(args):
-    import imageio.v2 as imageio
-    from .contract import environment_class
-
-    model, config, resolved = load_policy(args.model)
-    env = environment_class(resolved["environment_class"])(config)
-    out = fresh_directory(args.output, "evaluate")
-    observations, actions, reports = [], [], []
-    writer = imageio.get_writer(out / "rollout.mp4", fps=25) if args.video else None
-    viewer = None
-    began = time.monotonic()
-    try:
-        if args.viewer:
-            import mujoco.viewer
-
-            viewer = mujoco.viewer.launch_passive(env.model, env.data)
-        with (out / "trace.jsonl").open("x") as log:
-            for task in range(4):
-                obs, _ = env.reset(seed=args.seed + task, options={"task": task})
-                errors, stopped_speeds = [], []
-                terminated = truncated = cancelled = False
-                for i in range(round(config.episode_seconds / 0.01)):
-                    tick = time.monotonic()
-                    action, _ = model.predict(obs, deterministic=True)
-                    observations.append(obs.copy())
-                    actions.append(action.copy())
-                    obs, reward, terminated, truncated, info = env.step(action)
-                    log.write(json.dumps({**info, "reward": reward}) + "\n")
-                    errors.append(info["speed_error_mps"])
-                    if (
-                        info["sim_seconds"] >= config.episode_seconds - 0.5
-                        and np.max(np.abs(info["command"][:2])) < 0.01
-                    ):
-                        stopped_speeds.append(abs(info["forward_mps"]))
-                    if writer is not None and i % 4 == 0:
-                        writer.append_data(env.render())
-                    if viewer is not None:
-                        viewer.sync()
-                        if not viewer.is_running():
-                            cancelled = True
-                            break
-                        time.sleep(max(0.0, 0.01 - (time.monotonic() - tick)))
-                    if terminated or truncated:
-                        break
-                reports.append(
-                    {
-                        "task": task,
-                        "sim_seconds": info["sim_seconds"],
-                        "terminated": terminated,
-                        "time_limit_reached": truncated,
-                        "cancelled": cancelled,
-                        "speed_mae_mps": float(np.mean(errors)),
-                        "final_forward_mps": info["forward_mps"],
-                        "final_half_second_max_speed_mps": max(
-                            stopped_speeds, default=None
-                        ),
-                        "hold_drift_m": info.get("hold_drift_m"),
-                    }
-                )
-                if cancelled:
-                    break
-        np.savez_compressed(
-            out / "trajectory.npz",
-            observations=np.asarray(observations),
-            actions=np.asarray(actions),
+def list_stages(args) -> None:
+    course = load_course()
+    stages = []
+    for order, name in enumerate(course.order):
+        stage = course.stage(name)
+        stages.append(
+            {
+                "order": order,
+                "stage": name,
+                "task_id": task_id(name),
+                "budget": int(stage["budget"]),
+                "iterations": budget_iterations(
+                    int(stage["budget"]), args.n_envs
+                ),
+                "profiles": [profile["name"] for profile in stage["profiles"]],
+                "terrain": stage["terrain"]["kind"],
+            }
         )
+    print(json.dumps({"n_envs": args.n_envs, "stages": stages}, indent=2))
+
+
+def smoke(args) -> None:
+    import torch
+    from mjlab.envs import ManagerBasedRlEnv
+    from .mjlab_tasks import get_task_cfgs, require_cuda
+
+    device = require_cuda(args.device)
+    env_cfg, _ = get_task_cfgs(args.stage, play=True)
+    env_cfg.scene.num_envs = args.n_envs
+    env_cfg.episode_length_s = min(env_cfg.episode_length_s, 2.0)
+    env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
+    out = fresh_directory(args.output, "smoke")
+    try:
+        env.reset(seed=args.seed)
+        trace = []
+        for step in range(args.steps):
+            action = torch.rand(
+                (args.n_envs, 6), device=device, dtype=torch.float32
+            )
+            obs, reward, terminated, truncated, _ = env.step(action * 0.1)
+            record = {
+                "step": step,
+                "finite_obs": bool(torch.isfinite(obs["actor"]).all().item()),
+                "finite_reward": bool(torch.isfinite(reward).all().item()),
+                "terminated": terminated.int().tolist(),
+                "truncated": truncated.int().tolist(),
+            }
+            trace.append(record)
+            if bool((terminated | truncated).any().item()):
+                break
         result = {
-            "episodes": reports,
-            "wall_seconds": time.monotonic() - began,
-            "integrated_sim_seconds": sum(r["sim_seconds"] for r in reports),
-            "model": resolved["model"],
-            "contract": resolved["contract"],
-            "note": "Each task is a separate first episode; failures are retained without retry.",
+            "device": device,
+            "stage": args.stage,
+            "n_envs": args.n_envs,
+            "steps": len(trace),
+            "trace": trace,
+            "physics_pipeline": "passed",
+            "training": "not run",
         }
         write_json(out / "result.json", result)
         print(json.dumps({"output": str(out), **result}, ensure_ascii=False))
-        return 2 if any(r["terminated"] or r["cancelled"] for r in reports) else 0
     finally:
-        if writer is not None:
-            writer.close()
-        if viewer is not None:
-            viewer.close()
         env.close()
 
 
-def export(args):
-    import torch
-    import onnxruntime as ort
-    from .contract import environment_class
+def _experiment_root(log_root: Path) -> Path:
+    return (log_root / "diablo_xingtian_course").resolve()
 
-    model, config, resolved = load_policy(args.model)
+
+def _resume_args(checkpoint: Path | None, log_root: Path) -> list[str]:
+    if checkpoint is None:
+        return []
+    checkpoint = checkpoint.resolve()
+    expected_parent = _experiment_root(log_root)
+    if checkpoint.parent.parent != expected_parent:
+        raise ValueError(
+            "Resume checkpoint must be inside "
+            f"{expected_parent}/<run>/<checkpoint>"
+        )
+    return [
+        "--agent.resume",
+        "True",
+        "--agent.load-run",
+        checkpoint.parent.name,
+        "--agent.load-checkpoint",
+        checkpoint.name,
+    ]
+
+
+def train_stage(
+    stage: str,
+    n_envs: int,
+    log_root: Path,
+    resume: Path | None,
+    gpu_ids: list[int] | str,
+    iterations_override: int | None = None,
+) -> Path:
+    from .mjlab_tasks import latest_run, require_cuda, write_run_contract
+
+    require_cuda()
+    course = load_course()
+    if stage not in course.stages:
+        raise ValueError(f"Unknown stage '{stage}'")
+    iterations = (
+        iterations_override
+        if iterations_override is not None
+        else budget_iterations(int(course.stage(stage)["budget"]), n_envs, 24)
+    )
+    gpu_value = "all" if gpu_ids == "all" else str(list(gpu_ids))
+    command = [
+        sys.executable,
+        "-m",
+        "mjlab.scripts.train",
+        task_id(stage),
+        "--env.scene.num-envs",
+        str(n_envs),
+        "--agent.max-iterations",
+        str(iterations),
+        "--agent.save-interval",
+        "10" if stage == "composite" else "50",
+        "--agent.experiment-name",
+        "diablo_xingtian_course",
+        "--agent.run-name",
+        stage,
+        "--agent.logger",
+        "tensorboard",
+        "--agent.upload-model",
+        "False",
+        "--log-root",
+        str(log_root.resolve()),
+        "--gpu-ids",
+        gpu_value,
+        *_resume_args(resume, log_root),
+    ]
+    subprocess.run(command, check=True)
+    run_dir = latest_run(log_root.resolve(), stage)
+    write_run_contract(run_dir, stage, n_envs, iterations)
+    return run_dir
+
+
+def _latest_checkpoint(run_dir: Path) -> Path:
+    from .mjlab_tasks import candidate_checkpoints
+
+    return candidate_checkpoints(run_dir)[-1]
+
+
+def evaluate_policy(args) -> None:
+    from .mjlab_tasks import evaluate_checkpoint, require_cuda
+
+    device = require_cuda(args.device)
+    seeds = tuple(
+        int(value.strip()) for value in args.seeds.split(",") if value.strip()
+    )
+    if not seeds:
+        raise ValueError("At least one evaluation seed is required")
+    result = evaluate_checkpoint(
+        args.stage, Path(args.checkpoint), seeds, device=device
+    )
+    out = fresh_directory(args.output, "evaluate")
+    write_json(out / "result.json", result)
+    print(json.dumps({"output": str(out), **result}, ensure_ascii=False))
+    if not result["passed"]:
+        raise SystemExit(2)
+
+
+def train(args) -> None:
+    run_dir = train_stage(
+        args.stage,
+        args.n_envs,
+        args.log_root,
+        args.resume,
+        args.gpu_ids,
+        iterations_override=args.iterations,
+    )
+    print(
+        json.dumps(
+            {
+                "run": str(run_dir),
+                "checkpoint": str(_latest_checkpoint(run_dir)),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def course_train(args) -> None:
+    course = load_course()
+    resume = args.resume
+    final_run = None
+    for stage in course.order:
+        run_dir = train_stage(
+            stage,
+            args.n_envs,
+            args.log_root,
+            resume,
+            args.gpu_ids,
+        )
+        checkpoint = _latest_checkpoint(run_dir)
+        if stage != "composite":
+            result = evaluate_policy_result(stage, checkpoint, SCREEN_SEEDS, args)
+            gate_out = fresh_directory(
+                args.output / stage if args.output else None, "gate"
+            )
+            write_json(gate_out / "result.json", result)
+            if not result["passed"]:
+                raise RuntimeError(
+                    f"Stage {stage} failed its all-seed gate; see {gate_out}"
+                )
+        resume = checkpoint
+        final_run = run_dir
+        print(
+            f"[course] {stage}: "
+            f"{'TRAINED' if stage == 'composite' else 'PASS'} -> {run_dir}"
+        )
+    if final_run is None:
+        raise RuntimeError("No final composite run was produced")
+    select(args, run_dir=final_run)
+
+
+def evaluate_policy_result(
+    stage: str, checkpoint: Path, seeds: tuple[int, ...], args
+) -> dict:
+    from .mjlab_tasks import evaluate_checkpoint
+
+    return evaluate_checkpoint(stage, checkpoint, seeds, device=args.device)
+
+
+def select(args, run_dir: Path | None = None) -> None:
+    from .mjlab_tasks import require_cuda, select_policy_best
+
+    require_cuda(args.device)
+    result = select_policy_best(run_dir or args.run_dir, device=args.device)
+    print(
+        json.dumps(
+            {
+                "selected": result["selected"],
+                "policy_best_pt": result["policy_best_pt"],
+                "policy_best_onnx": result["policy_best_onnx"],
+                "blind_passed": result["blind"]["passed"],
+                "limit_passed": result["limit"]["passed"],
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+    if not result["blind"]["passed"] or not result["limit"]["passed"]:
+        raise SystemExit(2)
+
+
+def export(args) -> None:
+    from .mjlab_tasks import export_checkpoint, require_cuda
+
+    device = require_cuda(args.device)
     out = fresh_directory(args.output, "export")
-
-    class Actor(torch.nn.Module):
-        def __init__(self, policy):
-            super().__init__()
-            self.policy = policy
-
-        def forward(self, observation):
-            return self.policy._predict(observation, deterministic=True).clamp(-1, 1)
-
-    actor = Actor(model.policy).eval()
-    if args.observations:
-        samples = np.load(args.observations, allow_pickle=False)["observations"][:256]
-    else:
-        env = environment_class(resolved["environment_class"])(config)
-        frames = []
-        try:
-            obs, _ = env.reset(seed=0)
-            for _ in range(128):
-                frames.append(obs.copy())
-                action, _ = model.predict(obs, deterministic=True)
-                obs, _, done, truncated, _ = env.step(action)
-                if done or truncated:
-                    obs, _ = env.reset()
-            samples = np.asarray(frames)
-        finally:
-            env.close()
-    if (
-        samples.ndim != 2
-        or samples.shape[1] != 125
-        or not len(samples)
-        or not np.isfinite(samples).all()
-    ):
-        raise ValueError("Export observations must be nonempty finite [N,125]")
-    samples = samples.astype(np.float32)
-    example = torch.from_numpy(samples[:1])
-    torch.jit.trace(actor, example).save(str(out / "policy.pt"))
-    torch.onnx.export(
-        actor,
-        example,
-        str(out / "policy.onnx"),
-        input_names=["observation"],
-        output_names=["action"],
-        dynamic_axes={"observation": {0: "batch"}, "action": {0: "batch"}},
-        opset_version=17,
-        dynamo=False,
+    path = export_checkpoint(
+        args.stage,
+        Path(args.checkpoint),
+        out,
+        filename="policy.onnx",
+        device=device,
     )
-    session = ort.InferenceSession(
-        str(out / "policy.onnx"), providers=["CPUExecutionProvider"]
-    )
-    actual = session.run(None, {"observation": samples})[0]
-    expected, _ = model.predict(samples, deterministic=True)
-    scripted = torch.jit.load(str(out / "policy.pt"))
-    with torch.no_grad():
-        jit = scripted(torch.from_numpy(samples)).numpy()
-    np.testing.assert_allclose(actual, expected, atol=1e-5, rtol=1e-5)
-    np.testing.assert_allclose(jit, expected, atol=1e-5, rtol=1e-5)
-    contract = {
-        "input": {"observation": ["N", 125]},
-        "output": {"action": ["N", 6]},
-        "dtype": "float32",
-        "history": "oldest to newest, five 25-value frames including current",
-        "control_dt_s": 0.01,
-        "model": resolved["model"],
-        "environment": resolved["environment"],
-        "policy_contract": resolved["contract"],
-        "environment_class": resolved["environment_class"],
-        "interface_document": "docs/model-interface.md",
-        "simulation_only": True,
-        "hardware_authorized": False,
-        "samples_checked": len(samples),
-        "onnx_max_abs_error": float(np.max(np.abs(actual - expected))),
-        "jit_max_abs_error": float(np.max(np.abs(jit - expected))),
-    }
-    write_json(out / "contract.json", contract)
-    print(json.dumps({"directory": str(out), **contract}, ensure_ascii=False))
+    print(json.dumps({"onnx": str(path)}, ensure_ascii=False))
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description="DIABLO MuJoCo training — simulation only"
+        description="Xingtian DIABLO MJLab GPU locomotion training"
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("fetch", help="Fetch the pinned upstream robot assets")
-    check = commands.add_parser(
-        "doctor", help="Validate model, sensors and Gymnasium API"
-    )
+
+    commands.add_parser("fetch", help="Fetch pinned CAD sources")
+    check = commands.add_parser("doctor", help="CPU model and API checks")
     check.add_argument("--render", action="store_true")
-    for name in ("smoke", "train"):
-        command = commands.add_parser(name)
-        command.add_argument(
-            "--steps", type=int, default=200 if name == "smoke" else 200000
-        )
-        command.add_argument("--seed", type=int, default=42)
-        command.add_argument("--output", type=Path)
-        if name == "train":
-            command.add_argument("--n-envs", type=int, default=4)
-            command.add_argument("--max-speed", type=float)
-            command.add_argument("--noise", action="store_true")
-            command.add_argument("--device", default="cpu")
-            command.add_argument("--resume", type=Path)
-            command.add_argument(
-                "--config",
-                type=Path,
-                help="JSON environment / PPO / environment_class settings",
-            )
-    check = commands.add_parser("evaluate", aliases=["play"])
-    check.add_argument("--model", type=Path, required=True)
-    check.add_argument("--output", type=Path)
-    check.add_argument("--seed", type=int, default=314)
-    check.add_argument("--video", action="store_true")
-    check.add_argument("--viewer", action="store_true")
-    check = commands.add_parser("export")
-    check.add_argument("--model", type=Path, required=True)
-    check.add_argument("--output", type=Path)
-    check.add_argument("--observations", type=Path)
+    gpu_check = commands.add_parser("gpu-doctor", help="CUDA/MJLab smoke check")
+    gpu_check.add_argument("--device", default="cuda:0")
+
+    stages = commands.add_parser("list-stages")
+    stages.add_argument("--n-envs", type=int, default=4096)
+
+    smoke_parser = commands.add_parser("smoke")
+    smoke_parser.add_argument("--stage", default="flat_balance")
+    smoke_parser.add_argument("--n-envs", type=int, default=2)
+    smoke_parser.add_argument("--steps", type=int, default=20)
+    smoke_parser.add_argument("--seed", type=int, default=42)
+    smoke_parser.add_argument("--device", default="cuda:0")
+    smoke_parser.add_argument("--output", type=Path)
+
+    train_parser = commands.add_parser("train")
+    train_parser.add_argument("--stage", required=True)
+    train_parser.add_argument("--n-envs", type=int, default=4096)
+    train_parser.add_argument("--log-root", type=Path, default=Path("logs/rsl_rl"))
+    train_parser.add_argument("--resume", type=Path)
+    train_parser.add_argument("--gpu-ids", default="0")
+    train_parser.add_argument("--iterations", type=int)
+
+    course_parser = commands.add_parser("course-train")
+    course_parser.add_argument("--n-envs", type=int, default=4096)
+    course_parser.add_argument("--log-root", type=Path, default=Path("logs/rsl_rl"))
+    course_parser.add_argument("--resume", type=Path)
+    course_parser.add_argument("--gpu-ids", default="0")
+    course_parser.add_argument("--device", default="cuda:0")
+    course_parser.add_argument("--output", type=Path)
+
+    evaluate_parser = commands.add_parser("evaluate")
+    evaluate_parser.add_argument("--stage", required=True)
+    evaluate_parser.add_argument("--checkpoint", required=True)
+    evaluate_parser.add_argument("--seeds", required=True)
+    evaluate_parser.add_argument("--device", default="cuda:0")
+    evaluate_parser.add_argument("--output", type=Path)
+
+    select_parser = commands.add_parser("select-best")
+    select_parser.add_argument("--run-dir", type=Path, required=True)
+    select_parser.add_argument("--device", default="cuda:0")
+
+    export_parser = commands.add_parser("export")
+    export_parser.add_argument("--stage", required=True)
+    export_parser.add_argument("--checkpoint", required=True)
+    export_parser.add_argument("--device", default="cuda:0")
+    export_parser.add_argument("--output", type=Path)
+
     args = parser.parse_args()
+    if hasattr(args, "n_envs") and args.n_envs <= 0:
+        parser.error("--n-envs must be positive")
     if hasattr(args, "steps") and args.steps <= 0:
         parser.error("--steps must be positive")
-    if hasattr(args, "n_envs") and not 1 <= args.n_envs <= 64:
-        parser.error("--n-envs must be 1..64")
+    if hasattr(args, "iterations") and args.iterations is not None:
+        if args.iterations <= 0:
+            parser.error("--iterations must be positive")
+
+    if hasattr(args, "gpu_ids") and args.gpu_ids != "all":
+        try:
+            args.gpu_ids = [
+                int(value.strip())
+                for value in str(args.gpu_ids).strip("[]").split(",")
+                if value.strip()
+            ]
+        except ValueError as error:
+            parser.error(f"Invalid --gpu-ids: {error}")
+
     functions = {
         "fetch": lambda _: fetch(),
         "doctor": doctor,
+        "gpu-doctor": gpu_doctor,
+        "list-stages": list_stages,
         "smoke": smoke,
         "train": train,
-        "evaluate": evaluate,
-        "play": evaluate,
+        "course-train": course_train,
+        "evaluate": evaluate_policy,
+        "select-best": select,
         "export": export,
     }
-    return functions[args.command](args) or 0
+    functions[args.command](args)
+    return 0
 
 
 if __name__ == "__main__":

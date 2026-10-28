@@ -4,28 +4,30 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "embodied-execution"
-version = "0.2.0"
-description = "DIABLO locomotion training with MuJoCo and PPO"
+version = "0.3.0"
+description = "Xingtian DIABLO locomotion training with MJLab and MuJoCo Warp"
 requires-python = ">=3.11,<3.13"
 license = {text = "BSD-3-Clause"}
 dependencies = [
-  "mujoco==3.8.1",
+  "mjlab==1.6.0",
+  "mujoco==3.11.0",
+  "mujoco-warp~=3.11.0",
   "gymnasium==1.4.0",
-  "stable-baselines3==2.9.0",
   "torch>=2.8,<3",
   "tensorboard>=2.17,<3",
   "numpy>=1.26,<3",
-  "imageio==2.38.1",
-  "imageio-ffmpeg==0.6.0",
   "onnx>=1.17,<2",
-  "onnxruntime==1.31.0",
+  "onnxruntime>=1.19,<2",
 ]
 
 [project.scripts]
 diablo = "diablo_training.cli:main"
 
+[project.entry-points."mjlab.tasks"]
+xingtian = "diablo_training.mjlab_tasks"
+
 [tool.setuptools.packages.find]
 include = ["diablo_training*"]
 
 [tool.setuptools.package-data]
-diablo_training = ["upstream.lock.json"]
+diablo_training = ["upstream.lock.json", "curriculum.json", "flat_motion_speed_stages.json"]

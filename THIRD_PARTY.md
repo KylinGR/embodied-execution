@@ -20,7 +20,9 @@
 
 - MuJoCo：Google DeepMind，Apache-2.0。
 - Gymnasium：Farama Foundation，MIT。
-- Stable-Baselines3：DLR-RM及贡献者，MIT。
+- MJLab：The MjLab Developers，Apache-2.0。
+- MuJoCo Warp：Google DeepMind，Apache-2.0。
+- RSL-RL：Robotic Systems Lab, ETH Zurich，BSD-3-Clause。
 - PyTorch：PyTorch贡献者，BSD风格许可证；以安装版本分发条款为准。
 - NumPy、ONNX、ONNX Runtime、ImageIO及FFmpeg组件：各自独立的许可证。
 

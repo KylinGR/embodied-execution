@@ -1,6 +1,9 @@
 .venv/
 third_party/
 runs/
+logs/
+wandb/
+.tmp-*/
 __pycache__/
 *.py[cod]
 *.egg-info/
