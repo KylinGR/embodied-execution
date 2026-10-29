@@ -1,0 +1,30 @@
+WARNING Wed Oct 28 11:52:47 2026: Attach conflict when attaching 'robot' to 'mjlab scene', policy is 'warning'
+iterations: parent has 100 (default), child has 80, keeping parent value
+integrator: parent has 0 (default), child has 3, keeping parent value
+flag 'AutoReset': parent unset, child set, keeping parent
+
+WARNING Wed Oct 28 11:56:42 2026: Attach conflict when attaching 'robot' to 'mjlab scene', policy is 'warning'
+iterations: parent has 100 (default), child has 80, keeping parent value
+integrator: parent has 0 (default), child has 3, keeping parent value
+flag 'AutoReset': parent unset, child set, keeping parent
+
+WARNING Wed Oct 28 11:57:35 2026: Attach conflict when attaching 'robot' to 'mjlab scene', policy is 'warning'
+iterations: parent has 100 (default), child has 80, keeping parent value
+integrator: parent has 0 (default), child has 3, keeping parent value
+flag 'AutoReset': parent unset, child set, keeping parent
+
+WARNING Wed Oct 28 11:59:36 2026: Attach conflict when attaching 'robot' to 'mjlab scene', policy is 'warning'
+iterations: parent has 100 (default), child has 80, keeping parent value
+integrator: parent has 0 (default), child has 3, keeping parent value
+flag 'AutoReset': parent unset, child set, keeping parent
+
+WARNING Wed Oct 28 12:00:17 2026: Attach conflict when attaching 'robot' to 'mjlab scene', policy is 'warning'
+iterations: parent has 100 (default), child has 80, keeping parent value
+integrator: parent has 0 (default), child has 3, keeping parent value
+flag 'AutoReset': parent unset, child set, keeping parent
+
+WARNING Wed Oct 28 12:02:25 2026: Attach conflict when attaching 'robot' to 'mjlab scene', policy is 'warning'
+iterations: parent has 100 (default), child has 80, keeping parent value
+integrator: parent has 0 (default), child has 3, keeping parent value
+flag 'AutoReset': parent unset, child set, keeping parent
+

@@ -15,8 +15,17 @@ SPEED_STAGES_PATH = PACKAGE_DIR / "flat_motion_speed_stages.json"
 
 TARGET_BASE_HEIGHT_M = 0.270943
 TARGET_WHOLE_HEIGHT_M = 0.37958
+PROPRIO_HISTORY_LENGTH = 5
+OBSERVATION_SHAPE = (125,)
+ACTION_SHAPE = (6,)
+OBSERVATION_DTYPE = "float32"
+ACTION_DTYPE = "float32"
+HEADING_ERROR_OBS_SCALE = 5.0
+PROPRIO_FRAME_DIM = OBSERVATION_SHAPE[0] // PROPRIO_HISTORY_LENGTH
 SCREEN_SEEDS = (2001, 2002, 2003)
 VERIFY_SEEDS = (2004, 2005, 2006, 2007, 2008)
+SELECTION_PROBE_SEED = 2001
+SELECTION_VERIFY_SEEDS = (2002, 2003, 2004, 2005, 2006)
 BLIND_SEEDS = tuple(range(3101, 3111))
 LIMIT_SEEDS = (4101, 4102, 4103)
 
@@ -108,6 +117,9 @@ def load_course() -> Course:
     exposed = set(SCREEN_SEEDS) | set(VERIFY_SEEDS)
     if exposed & (set(BLIND_SEEDS) | set(LIMIT_SEEDS)):
         raise ValueError("Blind and limit seeds must not participate in selection")
+    selection_exposed = {SELECTION_PROBE_SEED, *SELECTION_VERIFY_SEEDS}
+    if selection_exposed & (set(BLIND_SEEDS) | set(LIMIT_SEEDS)):
+        raise ValueError("Blind and limit seeds must not participate in selection")
 
     return Course(
         stages=stages,
@@ -168,6 +180,13 @@ def budget_iterations(budget: int, num_envs: int, steps_per_env: int = 24) -> in
     if min(budget, num_envs, steps_per_env) <= 0:
         raise ValueError("Budget, environment count, and rollout length must be positive")
     return math.ceil(budget / (num_envs * steps_per_env))
+
+
+def checkpoint_interval(iterations: int, percent: int = 10) -> int:
+    """Return the iteration interval for roughly the requested percentage."""
+    if iterations <= 0 or not 0 < percent <= 100:
+        raise ValueError("Iterations must be positive and percent must be in (0, 100]")
+    return max(1, iterations * percent // 100)
 
 
 def task_id(stage_name: str) -> str:
@@ -306,7 +325,7 @@ def rank_policy_candidates(candidates: Iterable[dict[str, Any]]) -> list[dict[st
             float(candidate["mean_speed_mae_mps"]),
             float(candidate["mean_yaw_mae_rad_s"]),
             int(candidate["iteration"]),
-            str(candidate["path"]),
+            str(candidate["checkpoint"]),
         ),
     )
 
@@ -323,15 +342,19 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def interface_contract(course: Course) -> dict[str, Any]:
-    contract = {
-        "version": 3,
+def policy_interface_contract(course: Course) -> dict[str, Any]:
+    return {
+        "version": 7,
         "backend": "mjlab-rsl-rl",
         "mjlab": "1.6.0",
         "mujoco": "3.11.x",
-        "observation_shape": 160,
-        "observation_breakdown": {"proprio_history": 125, "height_scan": 35},
-        "action_shape": 6,
+        "observation_shape": OBSERVATION_SHAPE[0],
+        "observation_dtype": OBSERVATION_DTYPE,
+        "observation_breakdown": {
+            "proprio_history": OBSERVATION_SHAPE[0],
+        },
+        "action_shape": ACTION_SHAPE[0],
+        "action_dtype": ACTION_DTYPE,
         "action_order": [
             "left_hip_motor",
             "left_knee_motor",
@@ -343,22 +366,32 @@ def interface_contract(course: Course) -> dict[str, Any]:
         "control_dt_s": 0.01,
         "target_base_height_m": TARGET_BASE_HEIGHT_M,
         "target_whole_height_m": TARGET_WHOLE_HEIGHT_M,
-        "stage_order": list(course.order),
-        "task_ids": stage_task_ids(course),
-        "source_sha256": {
-            path.name: sha256(path)
-            for path in (
-                PACKAGE_DIR / "model.py",
-                PACKAGE_DIR / "mjlab_tasks.py",
-                CURRICULUM_PATH,
-                SPEED_STAGES_PATH,
-            )
-        },
-        "screen_seeds": list(SCREEN_SEEDS),
-        "verify_seeds": list(VERIFY_SEEDS),
-        "blind_seeds": list(BLIND_SEEDS),
-        "limit_seeds": list(LIMIT_SEEDS),
     }
+
+
+def interface_contract(course: Course) -> dict[str, Any]:
+    contract = policy_interface_contract(course)
+    contract.update(
+        {
+            "stage_order": list(course.order),
+            "task_ids": stage_task_ids(course),
+            "source_sha256": {
+                path.name: sha256(path)
+                for path in (
+                    PACKAGE_DIR / "model.py",
+                    PACKAGE_DIR / "control.py",
+                    PACKAGE_DIR / "mjlab_tasks.py",
+                    PACKAGE_DIR / "upstream.lock.json",
+                    CURRICULUM_PATH,
+                    SPEED_STAGES_PATH,
+                )
+            },
+            "screen_seeds": list(SCREEN_SEEDS),
+            "verify_seeds": list(VERIFY_SEEDS),
+            "blind_seeds": list(BLIND_SEEDS),
+            "limit_seeds": list(LIMIT_SEEDS),
+        }
+    )
     contract["sha256"] = hashlib.sha256(
         json.dumps(contract, sort_keys=True).encode()
     ).hexdigest()
@@ -371,6 +404,43 @@ def verify_interface_contract(content: dict[str, Any]) -> None:
     actual = hashlib.sha256(json.dumps(unsigned, sort_keys=True).encode()).hexdigest()
     if expected != actual:
         raise ValueError("MJLab run contract is missing or inconsistent")
+    current = policy_interface_contract(load_course())
+    mismatched = [
+        field
+        for field, expected_value in current.items()
+        if content.get(field) != expected_value
+    ]
+    if mismatched:
+        raise ValueError(
+            "Checkpoint policy interface is incompatible; mismatched fields: "
+            + ", ".join(mismatched)
+        )
+
+
+def verify_run_contract(
+    payload: dict[str, Any],
+    stage_name: str | None = None,
+) -> dict[str, Any]:
+    contract = payload.get("contract")
+    if not isinstance(contract, dict):
+        raise ValueError("Run contract is missing the nested 'contract' object")
+    verify_interface_contract(contract)
+    actual_stage = payload.get("stage")
+    if stage_name is not None and actual_stage != stage_name:
+        raise ValueError(
+            f"Run stage is {actual_stage}, requested {stage_name}"
+        )
+    return contract
+
+
+def load_run_contract(
+    path: Path,
+    stage_name: str | None = None,
+) -> dict[str, Any]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing run contract: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return verify_run_contract(payload, stage_name)
 
 
 if __name__ == "__main__":

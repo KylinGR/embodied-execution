@@ -23,6 +23,10 @@ CONTROL_DT = 0.01
 STALL_TORQUE = 17.0
 RATED_TORQUE = 9.6
 NO_LOAD_SPEED = 220 * 2 * np.pi / 60
+HIP_POSITION_GAIN = 60.0
+KNEE_POSITION_GAIN = 72.0
+HIP_DAMPING_GAIN = 1.0
+KNEE_DAMPING_GAIN = 1.0
 
 # Public product page: 22.9 kg including the splice mechanism. The public CAD
 # predates that complete assembly, so preserve its distribution and scale mass.
@@ -31,6 +35,16 @@ TARGET_BASE_HEIGHT_M = 0.270943
 TARGET_WHOLE_HEIGHT_M = 0.37958
 STANDING_SIZE_M = (0.540, 0.371, TARGET_WHOLE_HEIGHT_M)
 MAX_CONTINUOUS_SPEED_MPS = 2.0
+
+_PUBLISHED_INERTIAL_ORIGINS = {
+    "diablo_base_link": (-0.001, 0.0, 0.009267),
+    "left_fake_thigh_link": (0.001204, 0.0, -0.066749),
+    "left_thigh_link": (0.056675, -0.014633, -0.008),
+    "left_shank_link": (0.092381, 0.000001, 0.012349),
+    "right_fake_thigh_link": (0.001204, 0.0, 0.066749),
+    "right_thigh_link": (0.056675, -0.014633, 0.008),
+    "right_shank_link": (0.092381, 0.000001, -0.012349),
+}
 
 
 def _scale_mass_properties(robot: ET.Element) -> float:
@@ -48,6 +62,20 @@ def _scale_mass_properties(robot: ET.Element) -> float:
         for name in ("ixx", "ixy", "ixz", "iyy", "iyz", "izz"):
             inertia.set(name, str(float(inertia.get(name)) * scale))
     return scale
+
+
+def _apply_published_inertial_origins(robot: ET.Element) -> None:
+    for link_name, xyz in _PUBLISHED_INERTIAL_ORIGINS.items():
+        link = robot.find(f"link[@name='{link_name}']")
+        if link is None:
+            raise ValueError(f"Missing expected link {link_name}")
+        inertial = link.find("inertial")
+        if inertial is None:
+            raise ValueError(f"Missing expected inertia for {link_name}")
+        origin = inertial.find("origin")
+        if origin is None:
+            origin = ET.SubElement(inertial, "origin", rpy="0 0 0")
+        origin.set("xyz", " ".join(str(value) for value in xyz))
 
 
 def _robot_tree() -> ET.Element:
@@ -103,12 +131,18 @@ def _robot_tree() -> ET.Element:
     for mesh in robot.findall(".//mesh"):
         mesh.set("filename", str((source.parent / mesh.get("filename")).resolve()))
     _scale_mass_properties(robot)
+    _apply_published_inertial_origins(robot)
     extension = ET.SubElement(robot, "mujoco")
     ET.SubElement(extension, "compiler", fusestatic="false", discardvisual="false")
     return robot
 
 
-def make_robot_spec(*, include_floor: bool, include_actuators: bool):
+def make_robot_spec(
+    *,
+    include_floor: bool,
+    include_actuators: bool,
+    configure_options: bool = True,
+):
     """Build a fresh MJCF spec for either native MuJoCo or MJLab."""
     spec = mujoco.MjSpec.from_string(
         ET.tostring(_robot_tree(), encoding="unicode")
@@ -116,11 +150,12 @@ def make_robot_spec(*, include_floor: bool, include_actuators: bool):
     base = spec.body("diablo_base_link")
     base.add_freejoint(name="floating_base")
     base.pos = [0, 0, TARGET_BASE_HEIGHT_M]
-    spec.option.timestep = PHYSICS_DT
-    spec.option.gravity = [0, 0, -9.81]
-    spec.option.iterations = 80
-    spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
-    spec.option.disableflags |= mujoco.mjtDisableBit.mjDSBL_AUTORESET
+    if configure_options:
+        spec.option.timestep = PHYSICS_DT
+        spec.option.gravity = [0, 0, -9.81]
+        spec.option.iterations = 80
+        spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
+        spec.option.disableflags |= mujoco.mjtDisableBit.mjDSBL_AUTORESET
 
     if include_floor:
         spec.worldbody.add_geom(
@@ -183,6 +218,11 @@ def make_robot_spec(*, include_floor: bool, include_actuators: bool):
         if geom.name != "floor" and (geom.contype or geom.conaffinity):
             geom.contype, geom.conaffinity = 1, 2
             geom.friction = [0.8, 0.005, 0.0001]
+    for index, geom in enumerate(spec.geoms):
+        if geom.name == "floor":
+            continue
+        role = "visual" if geom.group == 1 else "collision"
+        geom.name = f"{geom.parent.name}_{role}_{index}"
     return spec
 
 
@@ -229,8 +269,10 @@ def metadata(model):
         "mechanism_sha256": hashlib.sha256(mechanism_path().read_bytes()).hexdigest(),
         "model_scope": (
             "CAD reference with explicit parallelogram closures; total mass "
-            "uniformly normalized to the public 22.9 kg product specification"
+            "uniformly normalized to the public 22.9 kg product specification; "
+            "link centers of mass restored from the locked Webots mechanism"
         ),
+        "auxiliary_caster_wheels": "excluded",
         "joints": list(JOINTS),
         "actuators": model.nu,
         "closure_constraints": model.neq,

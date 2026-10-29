@@ -15,9 +15,11 @@ import numpy as np
 import torch
 
 from mjlab.actuator import (
+    Actuator,
     ActuatorCfg,
     ActuatorCmd,
     BuiltinPositionActuatorCfg,
+    BuiltinPositionActuator,
 )
 from mjlab.entity import Entity, EntityArticulationInfoCfg, EntityCfg
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
@@ -32,6 +34,7 @@ from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.rl import (
+    MjlabOnPolicyRunner,
     RslRlModelCfg,
     RslRlOnPolicyRunnerCfg,
     RslRlPpoAlgorithmCfg,
@@ -48,7 +51,6 @@ from mjlab.sensor import (
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.registry import register_mjlab_task
 from mjlab.tasks.velocity import mdp as velocity_mdp
-from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 from mjlab.terrains import SubTerrainCfg, TerrainEntityCfg, TerrainGeneratorCfg
 from mjlab.terrains.terrain_generator import TerrainGeometry, TerrainOutput
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
@@ -57,25 +59,37 @@ from mjlab.utils.spec_config import CollisionCfg
 from mjlab.viewer import ViewerConfig
 
 from .contract import (
+    ACTION_DTYPE,
+    ACTION_SHAPE,
     BLIND_SEEDS,
+    HEADING_ERROR_OBS_SCALE,
     LIMIT_SEEDS,
-    SCREEN_SEEDS,
-    VERIFY_SEEDS,
+    OBSERVATION_DTYPE,
+    OBSERVATION_SHAPE,
+    PROPRIO_FRAME_DIM,
+    PROPRIO_HISTORY_LENGTH,
+    SELECTION_PROBE_SEED,
+    SELECTION_VERIFY_SEEDS,
     TARGET_BASE_HEIGHT_M,
     budget_iterations,
+    checkpoint_interval,
     fully_passes,
     gate_failures,
     gate_score,
     interface_contract,
+    load_run_contract,
     load_course,
     rank_policy_candidates,
     sha256,
-    verify_interface_contract,
 )
 from .model import (
     CONTROL_DT,
     DEFAULT_Q,
+    HIP_DAMPING_GAIN,
+    HIP_POSITION_GAIN,
     JOINTS,
+    KNEE_DAMPING_GAIN,
+    KNEE_POSITION_GAIN,
     LEGS,
     NO_LOAD_SPEED,
     OBSERVATION_SIGNS,
@@ -90,6 +104,56 @@ COURSE_HEIGHT_SCALE = 3.0
 WHEEL_RADIUS = 0.1
 GAIT_JOINTS = ("left_hip_motor", "left_knee_motor", "right_hip_motor", "right_knee_motor")
 WHEEL_JOINTS = ("left_wheel_motor", "right_wheel_motor")
+PASSIVE_JOINTS = (
+    "left_return_passive",
+    "left_branch_passive",
+    "right_return_passive",
+    "right_branch_passive",
+)
+KNEE_JOINTS = ("left_knee_motor", "right_knee_motor")
+
+
+def validate_policy_io(
+    observations: torch.Tensor | dict[str, torch.Tensor],
+    action: torch.Tensor | None = None,
+) -> None:
+    actor_obs = (
+        observations
+        if isinstance(observations, torch.Tensor)
+        else observations["actor"]
+    )
+    if (
+        actor_obs.ndim != 2
+        or tuple(actor_obs.shape[1:]) != OBSERVATION_SHAPE
+        or actor_obs.dtype != torch.float32
+    ):
+        raise RuntimeError(
+            f"Policy observation must be {OBSERVATION_DTYPE}[N,{OBSERVATION_SHAPE[0]}], "
+            f"got {actor_obs.dtype}{list(actor_obs.shape)}"
+        )
+    if action is None:
+        return
+    if (
+        action.ndim != 2
+        or action.shape[:-1] != actor_obs.shape[:-1]
+        or tuple(action.shape[1:]) != ACTION_SHAPE
+        or action.dtype != torch.float32
+    ):
+        raise RuntimeError(
+            f"Policy action must be {ACTION_DTYPE}[N,{ACTION_SHAPE[0]}], "
+            f"got {action.dtype}{list(action.shape)}"
+        )
+
+
+def _initial_joint_positions() -> dict[str, float]:
+    positions = {
+        name: float(DEFAULT_Q[i]) for i, name in enumerate(JOINTS)
+    }
+    for side_index, side in enumerate(("left", "right")):
+        knee = float(DEFAULT_Q[3 * side_index + 1])
+        positions[f"{side}_return_passive"] = knee
+        positions[f"{side}_branch_passive"] = -knee
+    return positions
 
 
 @dataclass(kw_only=True)
@@ -202,34 +266,76 @@ class XingtianAction(ActionTerm):
         if tuple(joint_names) != JOINTS:
             raise ValueError(f"Unexpected DIABLO joint order: {joint_names}")
         self._joint_ids = torch.tensor(joint_ids, device=self.device, dtype=torch.long)
-        ids = {name: i for i, name in enumerate(joint_names)}
+        joint_id = dict(zip(joint_names, joint_ids, strict=True))
+        action_index = {name: i for i, name in enumerate(JOINTS)}
         self._leg_ids = torch.tensor(
-            [ids[name] for name in GAIT_JOINTS], device=self.device, dtype=torch.long
+            [joint_id[name] for name in GAIT_JOINTS],
+            device=self.device,
+            dtype=torch.long,
         )
         self._wheel_ids = torch.tensor(
-            [ids[name] for name in WHEEL_JOINTS], device=self.device, dtype=torch.long
+            [joint_id[name] for name in WHEEL_JOINTS],
+            device=self.device,
+            dtype=torch.long,
+        )
+        self._leg_channels = torch.tensor(
+            [action_index[name] for name in GAIT_JOINTS],
+            device=self.device,
+            dtype=torch.long,
+        )
+        self._wheel_channels = torch.tensor(
+            [action_index[name] for name in WHEEL_JOINTS],
+            device=self.device,
+            dtype=torch.long,
         )
         self._default = self._entity.data.default_joint_pos[
             :, self._leg_ids
         ].clone()
         self._raw = torch.zeros((self.num_envs, 6), device=self.device)
+        self.position_target = torch.zeros(
+            (self.num_envs, len(GAIT_JOINTS)), device=self.device
+        )
+        self.wheel_velocity_target = torch.zeros(
+            (self.num_envs, len(WHEEL_JOINTS)), device=self.device
+        )
 
     @property
     def action_dim(self) -> int:
-        return 6
+        return ACTION_SHAPE[0]
 
     @property
     def raw_action(self) -> torch.Tensor:
         return self._raw
 
     def process_actions(self, actions: torch.Tensor) -> None:
-        if actions.shape != (self.num_envs, 6):
-            raise ValueError(f"Expected action shape {(self.num_envs, 6)}, got {actions.shape}")
+        expected = (self.num_envs, ACTION_SHAPE[0])
+        if actions.shape != expected or actions.dtype != torch.float32:
+            raise ValueError(
+                f"Expected float32 action shape {expected}, got "
+                f"{actions.dtype} {actions.shape}"
+            )
         self._raw[:] = torch.clamp(actions, -1.0, 1.0)
 
     def apply_actions(self) -> None:
-        leg_target = self._default + self.cfg.leg_scale * self._raw[:, self._leg_ids]
-        wheel_target = -self.cfg.wheel_speed_scale * self._raw[:, self._wheel_ids]
+        leg_target = (
+            self._default
+            + self.cfg.leg_scale * self._raw[:, self._leg_channels]
+        )
+        knee_pos = self._entity.data.joint_pos[:, self._leg_ids[1::2]]
+        # Native position actuators apply target-kp error directly. Add the
+        # same radial-load feedforward as the CPU controller as tau / kp.
+        knee_pos_ff = (
+            60.0
+            * 0.14
+            * torch.sin((-2.8729 - knee_pos) / 2.0)
+            / KNEE_POSITION_GAIN
+        )
+        leg_target[:, 1::2] += knee_pos_ff
+        wheel_target = (
+            -self.cfg.wheel_speed_scale * self._raw[:, self._wheel_channels]
+        )
+        self.position_target[:] = leg_target
+        self.wheel_velocity_target[:] = wheel_target
         self._entity.set_joint_position_target(
             leg_target, joint_ids=self._leg_ids
         )
@@ -270,6 +376,9 @@ class CourseCommand(CommandTerm):
         self.profile_ids = torch.zeros(
             self.num_envs, dtype=torch.long, device=self.device
         )
+        self.start_pos = torch.zeros((self.num_envs, 3), device=self.device)
+        self.start_heading = torch.zeros(self.num_envs, device=self.device)
+        self.target_heading = torch.zeros(self.num_envs, device=self.device)
         self._profile_tables = [
             (
                 torch.tensor(
@@ -290,6 +399,16 @@ class CourseCommand(CommandTerm):
             )
             for profile in self.profiles
         ]
+        self._heading_tables = []
+        for times, _, yaw in self._profile_tables:
+            heading_offsets = torch.zeros_like(times)
+            heading_offsets[1:] = torch.cumsum(
+                0.5
+                * (yaw[:-1] + yaw[1:])
+                * (times[1:] - times[:-1]),
+                dim=0,
+            )
+            self._heading_tables.append(heading_offsets)
         self.metrics["error_vel_x"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["error_yaw"] = torch.zeros(self.num_envs, device=self.device)
 
@@ -325,9 +444,23 @@ class CourseCommand(CommandTerm):
         poses[:, 0] = origins[:, 0] + start_offsets
         poses[:, 1] = origins[:, 1]
         poses[:, 2] = origins[:, 2] + self.cfg.base_height_m
-        poses[:, 3:7] = torch.tensor(
-            [1.0, 0.0, 0.0, 0.0], device=self.device
-        )
+        initial_heading = torch.zeros(len(env_ids), device=self.device)
+        heading_range = self.stage.get("reset_heading_range_deg")
+        if heading_range is not None:
+            if len(heading_range) != 2:
+                raise ValueError("reset_heading_range_deg must contain two values")
+            heading_min, heading_max = map(math.radians, map(float, heading_range))
+            if (
+                not math.isfinite(heading_min + heading_max)
+                or heading_min > heading_max
+            ):
+                raise ValueError("reset_heading_range_deg must be finite and ordered")
+            initial_heading.uniform_(heading_min, heading_max)
+        poses[:, 3] = torch.cos(0.5 * initial_heading)
+        poses[:, 4:6] = 0.0
+        poses[:, 6] = torch.sin(0.5 * initial_heading)
+        self.start_pos[env_ids] = poses[:, :3]
+        self.start_heading[env_ids] = 0.0
         self.robot.write_root_link_pose_to_sim(poses, env_ids=env_ids)
         self.robot.write_root_link_velocity_to_sim(
             torch.zeros((len(env_ids), 6), device=self.device), env_ids=env_ids
@@ -338,7 +471,10 @@ class CourseCommand(CommandTerm):
         ids = torch.arange(self.num_envs, device=self.device) if env_ids is None else env_ids
         seconds = self._env.episode_length_buf[ids].float() * self._env.step_dt
         values = torch.zeros((len(ids), 2), device=self.device)
-        for profile_index, (times, linear, yaw) in enumerate(self._profile_tables):
+        heading_offsets = torch.zeros(len(ids), device=self.device)
+        for profile_index, ((times, linear, yaw), heading_table) in enumerate(
+            zip(self._profile_tables, self._heading_tables, strict=True)
+        ):
             mask = self.profile_ids[ids] == profile_index
             local_time = seconds[mask]
             right = torch.searchsorted(times, local_time, right=True).clamp(
@@ -349,8 +485,12 @@ class CourseCommand(CommandTerm):
             blend = ((local_time - times[left]) / span).clamp(0.0, 1.0)
             values[mask, 0] = linear[left] + blend * (linear[right] - linear[left])
             values[mask, 1] = yaw[left] + blend * (yaw[right] - yaw[left])
+            heading_offsets[mask] = heading_table[left] + blend * (
+                heading_table[right] - heading_table[left]
+            )
         self.command_b[ids, :2] = values
         self.command_b[ids, 2] = self.cfg.base_height_m
+        self.target_heading[ids] = self.start_heading[ids] + heading_offsets
 
     def _update_command(self, env_ids: torch.Tensor | None) -> None:
         self._set_commands(env_ids)
@@ -586,9 +726,16 @@ class XingtianReward:
         defaults.update(COURSE.stages.get(self.stage_name, {}).get("reward_defaults", {}))
         self.defaults = defaults
         self.penalties = dict(COURSE.reward_penalties)
-        self.penalties.update(stage.get("overrides", {}))
+        self.penalties.update(self.stage.get("overrides", {}))
         self.robot: Entity = env.scene["robot"]
         self.command_term: CourseCommand = env.command_manager.get_term("course")
+        self._profile_peak = torch.tensor(
+            [
+                max(abs(float(point[1])) for point in profile["points"])
+                for profile in self.stage["profiles"]
+            ],
+            device=self.device,
+        )
         joint_ids, joint_names = self.robot.find_joints(
             JOINTS, preserve_order=True
         )
@@ -598,13 +745,17 @@ class XingtianReward:
             device=self.device,
             dtype=torch.long,
         )
+        self._wheel_action_ids = torch.tensor(
+            [JOINTS.index(name) for name in WHEEL_JOINTS],
+            device=self.device,
+            dtype=torch.long,
+        )
         self.obstacle_offsets = _obstacle_offsets(self.stage["terrain"])
         self._initialize_buffers()
 
     def _initialize_buffers(self) -> None:
         n = self.num_envs
         self._initialized = torch.zeros(n, dtype=torch.bool, device=self.device)
-        self._start = torch.zeros((n, 3), device=self.device)
         self._last_x = torch.zeros(n, device=self.device)
         self._last_vx = torch.zeros(n, device=self.device)
         self._peak_speed = torch.zeros(n, device=self.device)
@@ -618,22 +769,35 @@ class XingtianReward:
         self._roll_sum = torch.zeros(n, device=self.device)
         self._roll_max = torch.zeros(n, device=self.device)
         self._pitch_sum = torch.zeros(n, device=self.device)
+        self._steady_pitch_sum = torch.zeros(n, device=self.device)
+        self._steady_steps = torch.zeros(n, device=self.device)
         self._pitch_max = torch.zeros(n, device=self.device)
+        self._heading_error_max = torch.zeros(n, device=self.device)
         self._wheel_slip_sum = torch.zeros(n, device=self.device)
         self._wheel_slip_max = torch.zeros(n, device=self.device)
+        self._wheel_slip_excess_ema = torch.zeros(n, device=self.device)
         self._backslide_max = torch.zeros(n, device=self.device)
         self._cross_track_max = torch.zeros(n, device=self.device)
         self._wheel_center_max = torch.zeros(n, device=self.device)
         self._wheel_difference_max = torch.zeros(n, device=self.device)
+        self._wheel_target_difference_max = torch.zeros(n, device=self.device)
+        self._wheel_sync_excess_ema = torch.zeros(n, device=self.device)
         self._hold_drift_max = torch.zeros(n, device=self.device)
+        self._hold_drift_settled_max = torch.zeros(n, device=self.device)
         self._hold_origin = torch.zeros((n, 2), device=self.device)
+        self._hold_settled_origin = torch.zeros((n, 2), device=self.device)
+        self._hold_steps = torch.zeros(n, device=self.device)
         self._holding = torch.zeros(n, dtype=torch.bool, device=self.device)
+        self._hold_settled_active = torch.zeros(
+            n, dtype=torch.bool, device=self.device
+        )
         self._in_place_max = torch.zeros(n, device=self.device)
         self._in_place_origin = torch.zeros((n, 2), device=self.device)
         self._in_place_active_previous = torch.zeros(
             n, dtype=torch.bool, device=self.device
         )
         self._stop_speed_max = torch.zeros(n, device=self.device)
+        self._stop_speed_excess_ema = torch.zeros(n, device=self.device)
         self._power_sum = torch.zeros(n, device=self.device)
         self._stop_cycles = torch.zeros(n, device=self.device)
         self._obstacle_mask = torch.zeros(n, dtype=torch.long, device=self.device)
@@ -659,6 +823,7 @@ class XingtianReward:
             self._crested,
             self._fall,
             self._holding,
+            self._hold_settled_active,
             self._in_place_active_previous,
         ):
             tensor[env_ids] = False
@@ -677,16 +842,25 @@ class XingtianReward:
             self._roll_sum,
             self._roll_max,
             self._pitch_sum,
+            self._steady_pitch_sum,
+            self._steady_steps,
             self._pitch_max,
+            self._heading_error_max,
             self._wheel_slip_sum,
             self._wheel_slip_max,
+            self._wheel_slip_excess_ema,
             self._backslide_max,
             self._cross_track_max,
             self._wheel_center_max,
             self._wheel_difference_max,
+            self._wheel_target_difference_max,
+            self._wheel_sync_excess_ema,
             self._hold_drift_max,
+            self._hold_drift_settled_max,
+            self._hold_steps,
             self._in_place_max,
             self._stop_speed_max,
+            self._stop_speed_excess_ema,
             self._power_sum,
             self._obstacles,
             self._last_vx,
@@ -695,12 +869,38 @@ class XingtianReward:
         ):
             tensor[env_ids] = 0.0
         self._hold_origin[env_ids] = 0.0
+        self._hold_settled_origin[env_ids] = 0.0
         self._in_place_origin[env_ids] = 0.0
 
     def _quality(
         self, observed: torch.Tensor, tolerance: float
     ) -> torch.Tensor:
         return torch.exp(-torch.square(observed / max(tolerance, 1e-6)))
+
+    @staticmethod
+    def _huber(error: torch.Tensor, tolerance: float) -> torch.Tensor:
+        ratio = torch.abs(error) / max(tolerance, 1e-6)
+        return torch.where(
+            ratio <= 1.0,
+            0.5 * torch.square(ratio),
+            ratio - 0.5,
+        )
+
+    @staticmethod
+    def _gate_excess(
+        value: torch.Tensor,
+        limit: float,
+    ) -> torch.Tensor:
+        return torch.clamp(value / max(limit, 1e-6) - 1.0, min=0.0)
+
+    @classmethod
+    def _gate_cost(
+        cls,
+        value: torch.Tensor,
+        limit: float,
+    ) -> torch.Tensor:
+        ratio = value / max(limit, 1e-6)
+        return 0.05 * torch.square(ratio) + cls._gate_excess(value, limit)
 
     def _command_gradient(self, command: torch.Tensor) -> torch.Tensor:
         return (command - self._last_cmd) / self._env.step_dt
@@ -721,13 +921,13 @@ class XingtianReward:
         wheel_ang = robot.data.root_link_ang_vel_b[:, :2]
         gravity_xy = robot.data.projected_gravity_b[:, :2]
         pos_xy = robot.data.root_link_pos_w[:, :2]
+        heading = robot.data.heading_w
         scan = env.scene["terrain_scan"]
         center_ray = scan.num_rays_per_frame // 2
         clearance = scan.data.distances[:, center_ray]
 
         fresh = self._steps == 0
         if fresh.any():
-            self._start[fresh] = robot.data.root_link_pos_w[fresh]
             self._last_x[fresh] = robot.data.root_link_pos_w[fresh, 0]
             self._last_vx[fresh] = vx[fresh]
             self._initialized[fresh] = True
@@ -747,9 +947,40 @@ class XingtianReward:
         accel_tol = float(self.defaults.get("acceleration_tolerance_mps2", 0.8))
         zero_tol = float(self.defaults.get("zero_speed_tolerance_mps", 0.03))
         drift_tol = float(self.defaults.get("drift_tolerance_m", 0.2))
+        heading_tol = float(self.defaults.get("heading_tolerance_rad", 0.1745))
+        straight_heading_tol = float(
+            self.defaults.get("straight_heading_tolerance_rad", heading_tol)
+        )
+        alignment_tol = float(
+            self.defaults.get("wheel_alignment_tolerance_m", 0.01)
+        )
+        straight_yaw_tol = float(
+            self.defaults.get("straight_yaw_threshold_rad_s", 0.05)
+        )
 
         speed = self._quality(vx - cmd[:, 0], speed_tol)
         yaw = self._quality(wz - cmd[:, 1], yaw_tol)
+        heading_error = torch.atan2(
+            torch.sin(heading - self.command_term.target_heading),
+            torch.cos(heading - self.command_term.target_heading),
+        )
+        heading_cost = self._huber(heading_error, straight_heading_tol)
+        straight_heading_cost = torch.where(
+            torch.abs(cmd[:, 1]) <= straight_yaw_tol,
+            heading_cost,
+            torch.zeros(B, device=self.device),
+        )
+        cross_track_error = (
+            pos_xy[:, 1] - self.command_term.start_pos[:, 1]
+        )
+        cross_track_cost = torch.where(
+            torch.abs(cmd[:, 1]) <= straight_yaw_tol,
+            self._huber(
+                cross_track_error,
+                float(self.stage["gate"].get("max_cross_track_error_m", 0.05)),
+            ),
+            torch.zeros(B, device=self.device),
+        )
         height = self._quality(clearance - cmd[:, 2], height_tol)
         upright = torch.exp(-torch.sum(torch.square(gravity_xy), dim=1) / 0.04)
         pitch = torch.exp(-torch.square(gravity_xy[:, 0]) / pitch_tol**2)
@@ -758,24 +989,111 @@ class XingtianReward:
         wheel_avg = wheel_forward.mean(dim=1)
         wheel_slip = torch.abs(vx - wheel_avg)
         wheel_difference = torch.abs(wheel_forward[:, 0] - wheel_forward[:, 1])
+        wheel_target = env.action_manager.get_term("joints").wheel_velocity_target
+        wheel_target_difference = torch.abs(
+            wheel_target[:, 0] - wheel_target[:, 1]
+        )
+        raw_wheel_action = env.action_manager.action[:, self._wheel_action_ids]
+        previous_wheel_action = env.action_manager.prev_action[
+            :, self._wheel_action_ids
+        ]
+        wheel_direction_flip = (
+            raw_wheel_action * previous_wheel_action < 0.0
+        ).float().mean(dim=1)
         wheel_slip_reward = torch.exp(-torch.square(wheel_slip / slip_tol))
 
         moving = torch.abs(cmd[:, 0]) > zero_tol
+        stopping = torch.abs(cmd[:, 0]) <= zero_tol
         stand = (torch.abs(cmd[:, 0]) <= zero_tol) & (
             torch.abs(cmd[:, 1]) <= yaw_tol
+        )
+        straight = torch.abs(cmd[:, 1]) <= straight_yaw_tol
+        settle_time = float(self.defaults.get("hold_settle_time_s", 0.0))
+        if settle_time < 0.0:
+            raise ValueError("hold_settle_time_s must be nonnegative")
+        settle_steps = round(settle_time / self._env.step_dt)
+        settle_required = settle_steps > 0
+        self._heading_error_max = torch.maximum(
+            self._heading_error_max, torch.abs(heading_error)
+        )
+        self._cross_track_max = torch.maximum(
+            self._cross_track_max, torch.abs(cross_track_error)
+        )
+        self._wheel_difference_max = torch.maximum(
+            self._wheel_difference_max,
+            torch.where(
+                straight & self._hold_settled_active
+                if settle_required
+                else straight,
+                wheel_difference,
+                torch.zeros_like(wheel_difference),
+            ),
+        )
+        self._wheel_target_difference_max = torch.maximum(
+            self._wheel_target_difference_max,
+            wheel_target_difference,
         )
         new_hold = stand & ~self._holding
         self._hold_origin[new_hold] = pos_xy[new_hold]
         self._holding[:] = stand
+        self._hold_steps = torch.where(
+            self._holding,
+            self._hold_steps + 1.0,
+            torch.zeros(B, device=self.device),
+        )
+        new_settled_hold = (
+            self._holding
+            & (self._hold_steps >= settle_steps)
+            & ~self._hold_settled_active
+        )
+        self._hold_settled_origin[new_settled_hold] = pos_xy[new_settled_hold]
+        self._hold_settled_active[:] = (
+            self._holding & (self._hold_steps >= settle_steps)
+        )
         hold_displacement = torch.norm(pos_xy - self._hold_origin, dim=1)
+        settled_hold_drift = torch.where(
+            self._hold_settled_active,
+            torch.norm(pos_xy - self._hold_settled_origin, dim=1),
+            torch.zeros(B, device=self.device),
+        )
+        metric_active = (
+            self._hold_settled_active
+            if settle_required
+            else torch.ones_like(self._holding)
+        )
+        self._wheel_slip_max = torch.maximum(
+            self._wheel_slip_max,
+            torch.where(metric_active, wheel_slip, torch.zeros_like(wheel_slip)),
+        )
+        self._stop_speed_max = torch.maximum(
+            self._stop_speed_max,
+            torch.where(
+                stopping & metric_active,
+                torch.abs(vx),
+                torch.zeros_like(vx),
+            ),
+        )
         stationary = torch.where(
             stand,
             torch.exp(-torch.sum(torch.square(robot.data.root_link_lin_vel_b[:, :2]), dim=1) / zero_tol**2),
             torch.zeros(B, device=self.device),
         )
-        drift = torch.where(
+        drift_cost = torch.where(
+            self._holding,
+            self._huber(hold_displacement, drift_tol),
+            torch.zeros(B, device=self.device),
+        )
+        zero_motion_error = torch.sqrt(
+            torch.square(
+                torch.norm(robot.data.root_link_lin_vel_b[:, :2], dim=1)
+                / max(zero_tol, 1e-6)
+            )
+            + torch.square(wz / max(yaw_tol, 1e-6))
+            + torch.square(heading_error / max(heading_tol, 1e-6))
+        )
+        zero_motion_cost = torch.where(
             stand,
-            torch.exp(-torch.square(hold_displacement / drift_tol)),
+            torch.log1p(torch.square(zero_motion_error)),
             torch.zeros(B, device=self.device),
         )
         accel = (vx - self._last_vx) / self._env.step_dt
@@ -803,6 +1121,93 @@ class XingtianReward:
             torch.ones(B, device=self.device),
             torch.zeros(B, device=self.device),
         )
+        stop_quality = torch.where(
+            stopping,
+            torch.exp(-torch.square(torch.abs(vx) / max(zero_tol, 1e-6))),
+            torch.zeros(B, device=self.device),
+        )
+        slip_fraction_limit = float(
+            self.stage["gate"].get("max_wheel_slip_fraction_of_peak", 1.0)
+        )
+        slip_absolute_limit = float(
+            self.stage["gate"].get("max_wheel_slip_mps", 0.5)
+        )
+        raw_peak_command = self._profile_peak[self.command_term.profile_ids]
+        peak_command = torch.where(
+            raw_peak_command > 1e-6,
+            raw_peak_command,
+            torch.ones_like(raw_peak_command),
+        )
+        slip_limit = torch.minimum(
+            peak_command * slip_fraction_limit,
+            torch.full_like(peak_command, slip_absolute_limit),
+        )
+        wheel_slip_ratio = wheel_slip / slip_limit.clamp(min=1e-6)
+        wheel_slip_current_cost = (
+            0.05 * torch.square(wheel_slip_ratio)
+            + torch.clamp(wheel_slip_ratio - 1.0, min=0.0)
+        )
+        stop_speed_limit = float(
+            self.stage["gate"].get("max_stop_speed_mps", 0.1)
+        )
+        stop_speed_current_cost = torch.where(
+            stopping,
+            self._gate_cost(
+                torch.abs(vx),
+                stop_speed_limit,
+            ),
+            torch.zeros(B, device=self.device),
+        )
+        wheel_sync_limit = float(
+            self.stage["gate"].get(
+                "max_straight_wheel_speed_difference_mps",
+                0.15,
+            )
+        )
+        wheel_sync_current_cost = torch.where(
+            straight,
+            self._gate_cost(
+                wheel_difference,
+                wheel_sync_limit,
+            ),
+            torch.zeros(B, device=self.device),
+        )
+        gate_decay = float(
+            self.defaults.get("gate_penalty_ema_decay", 0.98)
+        )
+        self._wheel_slip_excess_ema = (
+            gate_decay * self._wheel_slip_excess_ema
+            + (1.0 - gate_decay) * wheel_slip_current_cost
+        )
+        self._stop_speed_excess_ema = (
+            gate_decay * self._stop_speed_excess_ema
+            + (1.0 - gate_decay) * stop_speed_current_cost
+        )
+        self._wheel_sync_excess_ema = (
+            gate_decay * self._wheel_sync_excess_ema
+            + (1.0 - gate_decay) * wheel_sync_current_cost
+        )
+        wheel_slip_gate_cost = (
+            wheel_slip_current_cost + self._wheel_slip_excess_ema
+        )
+        stop_speed_gate_cost = (
+            stop_speed_current_cost + self._stop_speed_excess_ema
+        )
+        wheel_sync_gate_cost = (
+            wheel_sync_current_cost + self._wheel_sync_excess_ema
+        )
+        wheel_target_scale = max(
+            float(
+                self.stage.get("control", {}).get(
+                    "wheel_speed_target_max_rad_s", 22.0
+                )
+            ),
+            1.0,
+        )
+        wheel_chatter_cost = (
+            (wheel_target_difference / wheel_target_scale).clamp(max=2.0)
+            + wheel_direction_flip
+        )
         direction = torch.sign(cmd[:, 0])
         backslide = torch.clamp(-direction * vx, min=0.0)
         under = torch.exp(-torch.square(torch.clamp(torch.abs(cmd[:, 0]) - torch.abs(vx), min=0) / speed_tol))
@@ -813,10 +1218,19 @@ class XingtianReward:
             :, robot.find_bodies(("left_wheel", "right_wheel"))[0]
         ]
         wheel_delta = wheel_poses[:, 0, :2] - wheel_poses[:, 1, :2]
-        heading = robot.data.heading_w
         wheel_center_offset = torch.abs(
             wheel_delta[:, 0] * torch.cos(heading)
             + wheel_delta[:, 1] * torch.sin(heading)
+        )
+        wheel_alignment_cost = torch.where(
+            torch.abs(cmd[:, 1]) <= straight_yaw_tol,
+            torch.clamp(
+                (wheel_center_offset - alignment_tol)
+                / max(alignment_tol, 1e-6),
+                min=0.0,
+                max=1.0,
+            ),
+            torch.zeros(B, device=self.device),
         )
         soft_limits = robot.data.soft_joint_pos_limits
         q = robot.data.joint_pos
@@ -844,16 +1258,19 @@ class XingtianReward:
             float(w.get("speed", 0.0)) * speed
             + float(w.get("underspeed", 0.0)) * under
             + float(w.get("yaw", 0.0)) * yaw
+            - float(w.get("straight_heading", 0.0)) * straight_heading_cost
+            - float(w.get("cross_track", 0.0)) * cross_track_cost
             + float(w.get("height", 0.0)) * height
             + float(w.get("upright", 0.0)) * upright
             + float(w.get("pitch", 0.0)) * pitch
             + float(w.get("stationary", 0.0)) * stationary
-            + float(w.get("drift", 0.0)) * drift
+            - float(w.get("drift", 0.0)) * drift_cost
+            - float(w.get("zero_motion", 0.0)) * zero_motion_cost
             + float(w.get("acceleration", 0.0)) * acceleration
             + float(w.get("in_place", 0.0)) * in_place
             + float(w.get("wheel_slip", 0.0)) * wheel_slip_reward
             + float(w.get("braking", 0.0)) * braking
-            + float(w.get("zero_speed", 0.0)) * (1.0 - zero_speed_cost)
+            + float(w.get("zero_speed", 0.0)) * stop_quality
             - float(p.get("lateral", 0.0)) * torch.square(vy)
             - float(p.get("action_rate", 0.0)) * action_rate
             - float(p.get("torque", 0.0)) * torque_cost
@@ -861,8 +1278,12 @@ class XingtianReward:
             * over_rated_cost
             - float(p.get("joint_limit", 0.0)) * joint_limit_cost
             - float(p.get("zero_speed", 0.0)) * zero_speed_cost
-            - float(p.get("wheel_alignment", 0.0)) * torch.square(wheel_center_offset)
+            - float(p.get("wheel_alignment", 0.0)) * wheel_alignment_cost
             - float(p.get("wheel_sync", 0.0)) * torch.square(wheel_difference)
+            - float(w.get("wheel_slip_gate", 0.0)) * wheel_slip_gate_cost
+            - float(w.get("stop_speed_gate", 0.0)) * stop_speed_gate_cost
+            - float(w.get("wheel_sync_gate", 0.0)) * wheel_sync_gate_cost
+            - float(w.get("wheel_chatter", 0.0)) * wheel_chatter_cost
             - float(w.get("vertical_velocity", 0.0)) * vertical_cost
             - float(w.get("angular_xy", 0.0)) * angular_cost
             - float(w.get("backslide", 0.0)) * backslide
@@ -870,13 +1291,13 @@ class XingtianReward:
         )
 
         x = robot.data.root_link_pos_w[:, 0]
-        signed_forward = x - self._start[:, 0]
+        signed_forward = x - self.command_term.start_pos[:, 0]
         progress = torch.abs(signed_forward)
         for obstacle_index, offset in enumerate(self.obstacle_offsets):
             marker = 1 << obstacle_index
             crossed = (
-                (self._last_x - (self._start[:, 0] + offset))
-                * (x - (self._start[:, 0] + offset))
+                (self._last_x - (self.command_term.start_pos[:, 0] + offset))
+                * (x - (self.command_term.start_pos[:, 0] + offset))
                 <= 0
             ) & (self._steps > 0)
             new_cross = crossed & ((self._obstacle_mask & marker) == 0)
@@ -904,10 +1325,16 @@ class XingtianReward:
             )
 
         fell = env.termination_manager.terminated
-        reward -= fell.float() * float(p.get("fall", 0.0))
+        # RewardManager also scales by dt. Keep the configured failure cost
+        # independent of control frequency so early termination is never cheap.
+        reward_scale = (
+            self._env.step_dt
+            if self._env.cfg.scale_rewards_by_dt
+            else 1.0
+        )
+        reward -= fell.float() * float(p.get("fall", 0.0)) / reward_scale
         self._fall |= fell
 
-        stopping = torch.abs(cmd[:, 0]) <= zero_tol
         new_stop = (
             (torch.abs(self._last_cmd) > zero_tol)
             & stopping
@@ -923,34 +1350,21 @@ class XingtianReward:
             self._height_max, torch.abs(clearance - cmd[:, 2])
         )
         self._pitch_sum += torch.abs(gravity_xy[:, 0])
+        self._steady_pitch_sum += torch.where(
+            metric_active,
+            torch.abs(gravity_xy[:, 0]),
+            torch.zeros(B, device=self.device),
+        )
+        self._steady_steps += metric_active.float()
         self._pitch_max = torch.maximum(self._pitch_max, torch.abs(gravity_xy[:, 0]))
         self._roll_sum += torch.abs(gravity_xy[:, 1])
         self._roll_max = torch.maximum(
             self._roll_max, torch.abs(gravity_xy[:, 1])
         )
         self._wheel_slip_sum += wheel_slip
-        self._wheel_slip_max = torch.maximum(self._wheel_slip_max, wheel_slip)
         self._backslide_max = torch.maximum(self._backslide_max, backslide)
-        self._cross_track_max = torch.maximum(
-            self._cross_track_max, torch.abs(pos_xy[:, 1] - self._start[:, 1])
-        )
         self._wheel_center_max = torch.maximum(
             self._wheel_center_max, wheel_center_offset
-        )
-        straight = (
-            moving
-            & (
-                torch.abs(cmd[:, 1])
-                <= float(
-                    self.defaults.get("straight_yaw_threshold_rad_s", 0.05)
-                )
-            )
-        )
-        self._wheel_difference_max = torch.maximum(
-            self._wheel_difference_max,
-            torch.where(
-                straight, wheel_difference, torch.zeros_like(wheel_difference)
-            ),
         )
         self._hold_drift_max = torch.maximum(
             self._hold_drift_max,
@@ -959,6 +1373,10 @@ class XingtianReward:
                 hold_displacement,
                 torch.zeros_like(hold_displacement),
             ),
+        )
+        self._hold_drift_settled_max = torch.maximum(
+            self._hold_drift_settled_max,
+            settled_hold_drift,
         )
         new_in_place = in_place_active & ~self._in_place_active_previous
         self._in_place_origin[new_in_place] = pos_xy[new_in_place]
@@ -974,10 +1392,6 @@ class XingtianReward:
             ),
         )
         self._in_place_active_previous[:] = in_place_active
-        self._stop_speed_max = torch.maximum(
-            self._stop_speed_max,
-            torch.where(stopping, torch.abs(vx), torch.zeros_like(vx)),
-        )
         self._power_sum += power
         self._peak_speed = torch.maximum(self._peak_speed, torch.abs(vx))
         self._steps += 1
@@ -985,71 +1399,175 @@ class XingtianReward:
         self._last_vx[:] = vx
         self._last_cmd[:] = cmd[:, 0]
         if self._env.extras.get("log") is not None:
-            self._env.extras["log"].update(
-                {
-                    "Metrics/speed_error_mps": torch.abs(vx - cmd[:, 0]).mean(),
-                    "Metrics/yaw_error_rad_s": torch.abs(wz - cmd[:, 1]).mean(),
-                    "Metrics/upright": upright.mean(),
-                    "Metrics/height_error_m": torch.abs(
-                        clearance - cmd[:, 2]
-                    ).mean(),
-                    "Metrics/wheel_slip_mps": wheel_slip.mean(),
-                    "Metrics/forward_progress_m": progress.mean(),
-                    "Metrics/obstacle_passes": self._obstacles.mean(),
-                    "Metrics/finish_rate": self._finished.float().mean(),
-                    "Metrics/fall_rate": self._fall.float().mean(),
-                }
-            )
+            wheel_actual = robot.data.joint_vel[:, self._wheel_ids]
+            log_values = {
+                "Metrics/speed_error_mps": torch.abs(vx - cmd[:, 0]).mean(),
+                "Metrics/yaw_error_rad_s": torch.abs(wz - cmd[:, 1]).mean(),
+                "Metrics/straight_heading_error_rad": torch.abs(
+                    heading_error
+                ).mean(),
+                "Metrics/heading_error_max_deg": torch.rad2deg(
+                    self._heading_error_max
+                ).mean(),
+                "Metrics/straight_heading_cost": straight_heading_cost.mean(),
+                "Metrics/cross_track_cost": cross_track_cost.mean(),
+                "Metrics/wheel_slip_gate_cost": wheel_slip_gate_cost.mean(),
+                "Metrics/stop_speed_gate_cost": stop_speed_gate_cost.mean(),
+                "Metrics/wheel_sync_gate_cost": wheel_sync_gate_cost.mean(),
+                "Metrics/wheel_chatter_cost": wheel_chatter_cost.mean(),
+                "Metrics/world_heading_deg": torch.rad2deg(heading).mean(),
+                "Metrics/upright": upright.mean(),
+                "Metrics/height_error_m": torch.abs(
+                    clearance - cmd[:, 2]
+                ).mean(),
+                "Metrics/wheel_slip_mps": wheel_slip.mean(),
+                "Metrics/left_wheel_target_rad_s": wheel_target[:, 0].mean(),
+                "Metrics/right_wheel_target_rad_s": wheel_target[:, 1].mean(),
+                "Metrics/left_wheel_actual_rad_s": wheel_actual[:, 0].mean(),
+                "Metrics/right_wheel_actual_rad_s": wheel_actual[:, 1].mean(),
+                "Metrics/wheel_target_difference_rad_s": torch.abs(
+                    wheel_target[:, 0] - wheel_target[:, 1]
+                ).mean(),
+                "Metrics/wheel_target_difference_max_rad_s": (
+                    self._wheel_target_difference_max.mean()
+                ),
+                "Metrics/wheel_actual_difference_rad_s": torch.abs(
+                    wheel_actual[:, 0] - wheel_actual[:, 1]
+                ).mean(),
+                "Metrics/forward_progress_m": progress.mean(),
+                "Metrics/hold_drift_m": hold_displacement.mean(),
+                "Metrics/hold_drift_after_0.5s_m": settled_hold_drift.mean(),
+                "Metrics/stop_quality": stop_quality.mean(),
+                "Metrics/zero_motion_cost": zero_motion_cost.mean(),
+                "Metrics/obstacle_passes": self._obstacles.mean(),
+                "Metrics/finish_rate": self._finished.float().mean(),
+                "Metrics/fall_rate": self._fall.float().mean(),
+            }
+            profile_ids = self.command_term.profile_ids
+            profile_metrics = {
+                "heading_error_deg": torch.rad2deg(self._heading_error_max),
+                "cross_track_m": self._cross_track_max,
+                "wheel_slip_gate_fraction": self._wheel_slip_max
+                / (
+                    peak_command * slip_fraction_limit
+                ).clamp(min=1e-6),
+                "stop_speed_mps": self._stop_speed_max,
+                "wheel_sync_mps": self._wheel_difference_max,
+                "wheel_target_difference_rad_s": (
+                    self._wheel_target_difference_max
+                ),
+                "wheel_chatter_cost": wheel_chatter_cost,
+            }
+            for profile_index, profile in enumerate(self.command_term.profiles):
+                mask = profile_ids == profile_index
+                count = mask.sum().clamp(min=1)
+                profile_name = profile["name"]
+                log_values[
+                    f"Metrics/straight_heading_error_{profile_name}_deg"
+                ] = (
+                    torch.rad2deg(torch.abs(heading_error)[mask]).sum() / count
+                )
+                log_values[f"Metrics/hold_drift_{profile_name}_m"] = (
+                    hold_displacement[mask].sum() / count
+                )
+                log_values[
+                    f"Metrics/hold_drift_after_0.5s_{profile_name}_m"
+                ] = settled_hold_drift[mask].sum() / count
+                for metric_name, metric_values in profile_metrics.items():
+                    masked = torch.where(
+                        mask,
+                        metric_values,
+                        torch.zeros_like(metric_values),
+                    )
+                    log_values[
+                        f"Metrics/{profile_name}/{metric_name}_mean"
+                    ] = masked.sum() / count
+                    log_values[
+                        f"Metrics/{profile_name}/{metric_name}_worst"
+                    ] = masked.max()
+            self._env.extras["log"].update(log_values)
         return reward
 
     def metrics(self) -> dict[str, torch.Tensor]:
         steps = self._steps.clamp(min=1)
         ratio = self._steps / max(self._env.max_episode_length, 1)
-        peak_command = torch.tensor(
+        raw_peak_command = torch.tensor(
             [
                 max(abs(float(point[1])) for point in profile["points"])
                 for profile in self.stage["profiles"]
             ],
             device=self.device,
-        )[self.command_term.profile_ids].clamp(min=1e-6)
-        progress = torch.abs(self._last_x - self._start[:, 0])
+        )[self.command_term.profile_ids]
+        has_speed_command = raw_peak_command > 1e-6
+        peak_command = torch.where(
+            has_speed_command,
+            raw_peak_command,
+            torch.ones_like(raw_peak_command),
+        )
+        fraction_scale = has_speed_command.float()
+        progress = torch.abs(
+            self._last_x - self.command_term.start_pos[:, 0]
+        )
         completed = (self._steps >= self._env.max_episode_length) & ~self._fall
         if self.stage["terrain"]["kind"] == "composite":
             completed = self._finished & ~self._fall
+        speed_mae = self._speed_err / steps
+        wheel_slip_fraction = (
+            self._wheel_slip_max / peak_command * fraction_scale
+        )
+        stop_speed_fraction = (
+            self._stop_speed_max / peak_command * fraction_scale
+        )
+        planned_peak_fraction = (
+            self._peak_speed / peak_command * fraction_scale
+        ).clamp(max=1.0)
         return {
             "pass_rate": completed.float(),
             "duration_fraction": ratio,
-            "speed_mae_mps": self._speed_err / steps,
-            "speed_mae_fraction_of_peak": self._speed_err / steps / peak_command,
+            "speed_mae_mps": speed_mae,
+            "speed_mae_fraction_of_peak": speed_mae / peak_command * fraction_scale,
             "yaw_mae_rad_s": self._yaw_err / steps,
             "upright": self._upright / steps,
             "mean_abs_pitch_deg": torch.rad2deg(self._pitch_sum / steps),
             "pitch_deg": torch.rad2deg(self._pitch_max),
-            "mean_abs_steady_pitch_deg": torch.rad2deg(self._pitch_sum / steps),
+            "mean_abs_steady_pitch_deg": torch.rad2deg(
+                self._steady_pitch_sum / self._steady_steps.clamp(min=1)
+            ),
             "mean_abs_roll_deg": torch.rad2deg(self._roll_sum / steps),
             "roll_deg": torch.rad2deg(self._roll_max),
             "final_heading_error_deg": torch.rad2deg(
-                torch.abs(self.robot.data.heading_w)
+                torch.abs(
+                    torch.atan2(
+                        torch.sin(
+                            self.robot.data.heading_w
+                            - self.command_term.target_heading
+                        ),
+                        torch.cos(
+                            self.robot.data.heading_w
+                            - self.command_term.target_heading
+                        ),
+                    )
+                )
             ),
             "mean_height_error_m": self._height_err / steps,
             "height_deviation_m": self._height_max,
             "wheel_slip_mps": self._wheel_slip_max,
             "wheel_slip_max_mps": self._wheel_slip_max,
-            "wheel_slip_fraction_of_peak": self._wheel_slip_max / peak_command,
+            "wheel_slip_fraction_of_peak": wheel_slip_fraction,
             "backslide_mps": self._backslide_max,
             "cross_track_error_m": self._cross_track_max,
             "wheel_center_offset_m": self._wheel_center_max,
             "straight_wheel_speed_difference_mps": self._wheel_difference_max,
             "hold_drift_m": self._hold_drift_max,
+            "settled_hold_drift_m": self._hold_drift_settled_max,
+            "hold_drift_after_0.5s_m": self._hold_drift_settled_max,
             "in_place_displacement_m": self._in_place_max,
             "stop_speed_mps": self._stop_speed_max,
-            "stop_speed_fraction_of_peak": self._stop_speed_max / peak_command,
+            "stop_speed_fraction_of_peak": stop_speed_fraction,
             "stop_cycles": self._stop_cycles,
             "obstacle_passes": self._obstacles,
             "forward_progress_m": progress,
-            "planned_peak_progress_fraction": (
-                self._peak_speed / peak_command
-            ).clamp(max=1.0),
+            "planned_peak_progress_fraction": planned_peak_fraction,
             "finished": self._finished.float(),
             "fell": self._fall.float(),
             "mean_positive_power_w": self._power_sum / steps,
@@ -1059,25 +1577,41 @@ class XingtianReward:
 def _proprio(env: ManagerBasedRlEnv) -> torch.Tensor:
     robot: Entity = env.scene["robot"]
     command = env.command_manager.get_command("course")
+    command_term = env.command_manager.get_term("course")
     joint_ids, _ = robot.find_joints(JOINTS, preserve_order=True)
     leg_ids = torch.tensor(
         [joint_ids[i] for i in LEGS], device=env.device, dtype=torch.long
     )
     joint_ids_t = torch.tensor(joint_ids, device=env.device, dtype=torch.long)
     signs = torch.tensor(OBSERVATION_SIGNS, device=env.device, dtype=torch.float)
+    heading_error = torch.atan2(
+        torch.sin(robot.data.heading_w - command_term.target_heading),
+        torch.cos(robot.data.heading_w - command_term.target_heading),
+    )
+    command_observation = torch.stack(
+        (
+            command[:, 0] * 10.0,
+            command[:, 1] * 0.25,
+            heading_error * HEADING_ERROR_OBS_SCALE,
+        ),
+        dim=-1,
+    )
     frame = torch.cat(
         (
             robot.data.root_link_ang_vel_b * 0.25,
             robot.data.projected_gravity_b,
-            command * torch.tensor([10.0, 0.25, 5.0], device=env.device),
+            command_observation,
             robot.data.joint_pos[:, leg_ids] - robot.data.default_joint_pos[:, leg_ids],
             robot.data.joint_vel[:, joint_ids_t] * signs * 0.05,
             env.action_manager.prev_action,
         ),
         dim=-1,
     )
-    if frame.shape[-1] != 25:
-        raise RuntimeError(f"Proprio observation must have 25 values, got {frame.shape[-1]}")
+    if frame.shape[-1] != PROPRIO_FRAME_DIM or frame.dtype != torch.float32:
+        raise RuntimeError(
+            f"Proprio observation must be float32[{PROPRIO_FRAME_DIM}], got "
+            f"{frame.dtype}{list(frame.shape)}"
+        )
     return frame
 
 
@@ -1115,6 +1649,156 @@ def _terminate_body_contact(
     del seconds
     sensor = env.scene[sensor_name]
     return sensor.data.found.any(dim=-1)
+
+
+def _reset_passive_joints(
+    env: ManagerBasedRlEnv, env_ids: torch.Tensor | None
+) -> None:
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    robot: Entity = env.scene["robot"]
+    passive_ids, passive_names = robot.find_joints(
+        PASSIVE_JOINTS, preserve_order=True
+    )
+    if tuple(passive_names) != PASSIVE_JOINTS:
+        raise RuntimeError(f"Unexpected passive joint order: {passive_names}")
+    knee_ids, knee_names = robot.find_joints(KNEE_JOINTS, preserve_order=True)
+    if tuple(knee_names) != KNEE_JOINTS:
+        raise RuntimeError(f"Unexpected knee joint order: {knee_names}")
+    passive_ids_t = torch.tensor(
+        passive_ids, device=env.device, dtype=torch.long
+    )
+    knee_ids_t = torch.tensor(knee_ids, device=env.device, dtype=torch.long)
+    knees = robot.data.joint_pos[env_ids][:, knee_ids_t]
+    knee_velocities = robot.data.joint_vel[env_ids][:, knee_ids_t]
+    signs = torch.tensor(
+        (1.0, -1.0, 1.0, -1.0), device=env.device, dtype=knees.dtype
+    )
+    passive_positions = knees[:, [0, 0, 1, 1]] * signs
+    passive_velocities = knee_velocities[:, [0, 0, 1, 1]] * signs
+    robot.write_joint_state_to_sim(
+        passive_positions,
+        passive_velocities,
+        joint_ids=passive_ids_t,
+        env_ids=env_ids,
+    )
+
+
+def verify_reset_state(
+    env: ManagerBasedRlEnv, tolerance: float = 1e-5
+) -> dict[str, float | int]:
+    """Fail fast when GPU reset starts outside the closed-loop configuration."""
+    robot: Entity = env.scene["robot"]
+    passive_ids, passive_names = robot.find_joints(
+        PASSIVE_JOINTS, preserve_order=True
+    )
+    if tuple(passive_names) != PASSIVE_JOINTS:
+        raise RuntimeError(f"Unexpected passive joint order: {passive_names}")
+    knee_ids, knee_names = robot.find_joints(KNEE_JOINTS, preserve_order=True)
+    if tuple(knee_names) != KNEE_JOINTS:
+        raise RuntimeError(f"Unexpected knee joint order: {knee_names}")
+    passive_ids_t = torch.tensor(
+        passive_ids, device=env.device, dtype=torch.long
+    )
+    knee_ids_t = torch.tensor(knee_ids, device=env.device, dtype=torch.long)
+    knees = robot.data.joint_pos[:, knee_ids_t]
+    expected = torch.stack(
+        (knees[:, 0], -knees[:, 0], knees[:, 1], -knees[:, 1]), dim=1
+    )
+    max_error = float(
+        torch.abs(robot.data.joint_pos[:, passive_ids_t] - expected).max().item()
+    )
+    if max_error > tolerance:
+        raise RuntimeError(
+            "GPU reset violates the parallelogram closure: "
+            f"passive joint error {max_error:.6g} rad > {tolerance:.6g}"
+        )
+    contact_counts = {}
+    for sensor_name in ("body_ground_contact", "leg_ground_contact"):
+        contact = env.scene[sensor_name].data.found
+        contact_counts[sensor_name] = int(
+            contact.reshape(contact.shape[0], -1).any(dim=1).sum().item()
+        )
+    grounded = sum(contact_counts.values())
+    if grounded:
+        details = ", ".join(
+            f"{name}={count}" for name, count in contact_counts.items()
+        )
+        raise RuntimeError(
+            f"GPU reset starts with non-wheel ground contact ({details})"
+        )
+    return {
+        "passive_joint_max_error_rad": max_error,
+        "body_ground_contact_count": contact_counts["body_ground_contact"],
+        "leg_ground_contact_count": contact_counts["leg_ground_contact"],
+    }
+
+
+def verify_zero_action_stance(
+    env: ManagerBasedRlEnv,
+    steps: int = 20,
+    minimum_base_height: float = 0.23,
+) -> dict[str, float]:
+    """Require the default PD stance to survive the initial control horizon."""
+    action = env.action_manager.action.new_zeros((env.num_envs, 6))
+    robot: Entity = env.scene["robot"]
+    minimum_height = float("inf")
+    previous_auto_reset = env.cfg.auto_reset
+    env.cfg.auto_reset = False
+    try:
+        for step in range(steps):
+            _, reward, terminated, truncated, _ = env.step(action)
+            if not bool(reward.isfinite().all().item()):
+                raise RuntimeError("Zero-action stance produced a non-finite reward")
+            if bool((terminated | truncated).any().item()):
+                action_term: XingtianAction = env.action_manager.get_term("joints")
+                actuator_gain = env.sim.model.actuator_gainprm[:, :, 0]
+                actuator_bias = env.sim.model.actuator_biasprm[:, :, 1:3]
+                terms = {
+                    name: bool(env.termination_manager.get_term(name).any().item())
+                    for name in (
+                        "body_ground",
+                        "leg_ground",
+                        "bad_orientation",
+                        "time_out",
+                    )
+                }
+                leg_ids, _ = robot.find_joints(GAIT_JOINTS, preserve_order=True)
+                leg_ids_t = torch.tensor(
+                    leg_ids, device=env.device, dtype=torch.long
+                )
+                wheel_contact = env.scene["wheel_ground_contact"].data.found
+                raise RuntimeError(
+                    "Default standing pose terminated during stance check: "
+                    f"step={step + 1}, base_height="
+                    f"{float(robot.data.root_link_pos_w[:, 2].min().item()):.4f} m, "
+                    f"leg_pos={robot.data.joint_pos[0, leg_ids_t].tolist()}, "
+                    f"leg_vel={robot.data.joint_vel[0, leg_ids_t].tolist()}, "
+                    f"actuator_force={robot.data.actuator_force[0].tolist()}, "
+                    f"position_target={action_term.position_target[0].tolist()}, "
+                    f"wheel_velocity_target="
+                    f"{action_term.wheel_velocity_target[0].tolist()}, "
+                    f"gainprm={actuator_gain[0].tolist()}, "
+                    f"biasprm={actuator_bias[0].tolist()}, "
+                    f"wheel_contact={int(wheel_contact.any().item())}, "
+                    f"terms={terms}"
+                )
+            minimum_height = min(
+                minimum_height,
+                float(robot.data.root_link_pos_w[:, 2].min().item()),
+            )
+    finally:
+        env.cfg.auto_reset = previous_auto_reset
+    if minimum_height < minimum_base_height:
+        raise RuntimeError(
+            "Default standing pose collapsed: "
+            f"minimum base height {minimum_height:.4f} m < "
+            f"{minimum_base_height:.4f} m"
+        )
+    return {
+        "steps": steps,
+        "minimum_base_height_m": minimum_height,
+    }
 
 
 def _course_terrain_levels(
@@ -1162,6 +1846,40 @@ def _randomize_wheel_gains(
 
 
 @requires_model_fields(
+    "actuator_gainprm", "actuator_biasprm"
+)
+def _randomize_leg_gains(
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor | None,
+    scale_range: tuple[float, float],
+) -> None:
+    ids = (
+        torch.arange(env.num_envs, device=env.device)
+        if env_ids is None
+        else env_ids
+    )
+    robot: Entity = env.scene["robot"]
+    gain_default = env.sim.get_default_field("actuator_gainprm")
+    bias_default = env.sim.get_default_field("actuator_biasprm")
+    for actuator in robot.actuators:
+        if not isinstance(actuator, BuiltinPositionActuator):
+            continue
+        ctrl_ids = actuator.global_ctrl_ids
+        shape = (len(ids), len(ctrl_ids))
+        kp_scale = torch.empty(shape, device=env.device).uniform_(*scale_range)
+        kd_scale = torch.empty(shape, device=env.device).uniform_(*scale_range)
+        env.sim.model.actuator_gainprm[ids[:, None], ctrl_ids, 0] = (
+            gain_default[ctrl_ids, 0] * kp_scale
+        )
+        env.sim.model.actuator_biasprm[ids[:, None], ctrl_ids, 1] = (
+            bias_default[ctrl_ids, 1] * kp_scale
+        )
+        env.sim.model.actuator_biasprm[ids[:, None], ctrl_ids, 2] = (
+            bias_default[ctrl_ids, 2] * kd_scale
+        )
+
+
+@requires_model_fields(
     "body_mass", "body_inertia", recompute=RecomputeLevel.set_const
 )
 def _randomize_mass_and_inertia(
@@ -1190,16 +1908,16 @@ def _make_robot_cfg(name: str) -> EntityCfg:
     actuators = (
         BuiltinPositionActuatorCfg(
             target_names_expr=(".*_hip_motor",),
-            stiffness=15.0,
-            damping=0.3,
+            stiffness=HIP_POSITION_GAIN,
+            damping=HIP_DAMPING_GAIN,
             effort_limit=STALL_TORQUE,
             armature=0.01,
             frictionloss=0.05,
         ),
         BuiltinPositionActuatorCfg(
             target_names_expr=(".*_knee_motor",),
-            stiffness=18.0,
-            damping=0.2,
+            stiffness=KNEE_POSITION_GAIN,
+            damping=KNEE_DAMPING_GAIN,
             effort_limit=STALL_TORQUE,
             armature=0.01,
             frictionloss=0.05,
@@ -1222,7 +1940,7 @@ def _make_robot_cfg(name: str) -> EntityCfg:
         ),
     )
     collision = CollisionCfg(
-        geom_names_expr=(".*",),
+        geom_names_expr=(r"^.*_collision_\d+$",),
         contype=1,
         conaffinity=2,
         condim=3,
@@ -1233,11 +1951,13 @@ def _make_robot_cfg(name: str) -> EntityCfg:
     return EntityCfg(
         init_state=EntityCfg.InitialStateCfg(
             pos=(0.0, 0.0, TARGET_BASE_HEIGHT_M),
-            joint_pos={name: float(DEFAULT_Q[i]) for i, name in enumerate(JOINTS)},
+            joint_pos=_initial_joint_positions(),
             joint_vel={".*": 0.0},
         ),
         spec_fn=lambda: make_robot_spec(
-            include_floor=False, include_actuators=False
+            include_floor=False,
+            include_actuators=False,
+            configure_options=False,
         ),
         articulation=EntityArticulationInfoCfg(
             actuators=actuators, soft_joint_pos_limit_factor=0.95
@@ -1287,6 +2007,10 @@ def _terrain_cfg(name: str, play: bool = False) -> TerrainEntityCfg:
 
 def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
     stage = COURSE.stage(name)
+    terrain = stage["terrain"]
+    observation_noise = float(stage.get("observation_noise", 0.02))
+    if observation_noise < 0.0 or not math.isfinite(observation_noise):
+        raise ValueError("observation_noise must be finite and nonnegative")
     scan = RayCastSensorCfg(
         name="terrain_scan",
         frame=ObjRef(type="body", name="diablo_base_link", entity="robot"),
@@ -1313,10 +2037,22 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
         name="body_ground_contact",
         primary=ContactMatch(
             mode="body",
+            pattern=r"^diablo_base_link$",
+            entity="robot",
+        ),
+        secondary=ContactMatch(mode="body", pattern="terrain"),
+        fields=("found",),
+        reduce="none",
+        num_slots=1,
+    )
+    leg_contact = ContactSensorCfg(
+        name="leg_ground_contact",
+        primary=ContactMatch(
+            mode="body",
             pattern=(
-                r"^(diablo_base_link|left_thigh_link|left_shank_link|"
-                r"left_parallel_link|right_thigh_link|right_shank_link|"
-                r"right_parallel_link)$"
+                r"^(left_fake_thigh_link|left_thigh_link|left_shank_link|"
+                r"left_parallel_link|right_fake_thigh_link|right_thigh_link|"
+                r"right_shank_link|right_parallel_link)$"
             ),
             entity="robot",
         ),
@@ -1330,13 +2066,12 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
             terms={
                 "proprio": ObservationTermCfg(
                     func=_proprio,
-                    noise=Unoise(n_min=-0.02, n_max=0.02),
-                    history_length=5,
+                    noise=Unoise(
+                        n_min=-observation_noise,
+                        n_max=observation_noise,
+                    ),
+                    history_length=PROPRIO_HISTORY_LENGTH,
                     flatten_history_dim=True,
-                ),
-                "height_scan": ObservationTermCfg(
-                    func=_height_scan,
-                    noise=Unoise(n_min=-0.03, n_max=0.03),
                 ),
             },
             concatenate_terms=True,
@@ -1345,7 +2080,9 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
         "critic": ObservationGroupCfg(
             terms={
                 "proprio": ObservationTermCfg(
-                    func=_proprio, history_length=5, flatten_history_dim=True
+                    func=_proprio,
+                    history_length=PROPRIO_HISTORY_LENGTH,
+                    flatten_history_dim=True,
                 ),
                 "height_scan": ObservationTermCfg(func=_height_scan),
                 "privileged": ObservationTermCfg(func=_privileged),
@@ -1383,52 +2120,60 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
                 "asset_cfg": SceneEntityCfg("robot", joint_names=JOINTS),
             },
         ),
-        "friction": EventTermCfg(
-            func=dr.geom_friction,
-            mode="startup",
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "operation": "abs",
-                "ranges": (
-                    COURSE.randomization["friction_min"],
-                    COURSE.randomization["friction_max"],
-                ),
-                "shared_random": True,
-            },
-        ),
-        "mass": EventTermCfg(
-            func=_randomize_mass_and_inertia,
-            mode="startup",
-            params={
-                "scale_range": (
-                    COURSE.randomization["mass_scale_min"],
-                    COURSE.randomization["mass_scale_max"],
-                ),
-            },
-        ),
-        "leg_gains": EventTermCfg(
-            func=dr.pd_gains,
-            mode="startup",
-            params={
-                "kp_range": (0.9, 1.1),
-                "kd_range": (0.9, 1.1),
-                "asset_cfg": SceneEntityCfg(
-                    "robot", actuator_names=JOINTS[:2] + JOINTS[3:5]
-                ),
-            },
-        ),
-        "wheel_gains": EventTermCfg(
-            func=_randomize_wheel_gains,
-            mode="startup",
-            params={
-                "scale_range": (
-                    COURSE.randomization["actuator_scale_min"],
-                    COURSE.randomization["actuator_scale_max"],
-                )
-            },
+        "reset_passive_joints": EventTermCfg(
+            func=_reset_passive_joints,
+            mode="reset",
         ),
     }
-    if name in {"rough", "roller_obstacle", "composite"}:
+    if not play:
+        events.update(
+            {
+                "friction": EventTermCfg(
+                    func=dr.geom_friction,
+                    mode="startup",
+                    params={
+                        "asset_cfg": SceneEntityCfg("robot"),
+                        "operation": "abs",
+                        "ranges": (
+                            COURSE.randomization["friction_min"],
+                            COURSE.randomization["friction_max"],
+                        ),
+                        "shared_random": True,
+                    },
+                ),
+                "mass": EventTermCfg(
+                    func=_randomize_mass_and_inertia,
+                    mode="startup",
+                    params={
+                        "scale_range": (
+                            COURSE.randomization["mass_scale_min"],
+                            COURSE.randomization["mass_scale_max"],
+                        ),
+                    },
+                ),
+                "leg_gains": EventTermCfg(
+                    func=_randomize_leg_gains,
+                    mode="startup",
+                    params={
+                        "scale_range": (
+                            COURSE.randomization["actuator_scale_min"],
+                            COURSE.randomization["actuator_scale_max"],
+                        ),
+                    },
+                ),
+                "wheel_gains": EventTermCfg(
+                    func=_randomize_wheel_gains,
+                    mode="startup",
+                    params={
+                        "scale_range": (
+                            COURSE.randomization["actuator_scale_min"],
+                            COURSE.randomization["actuator_scale_max"],
+                        )
+                    },
+                ),
+            }
+        )
+    if not play and name in {"rough", "roller_obstacle", "composite"}:
         events["push"] = EventTermCfg(
             func=envs_mdp.push_by_setting_velocity,
             mode="interval",
@@ -1449,15 +2194,22 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
             params={"stage_name": name},
         )
     }
+    termination_tilt_deg = float(stage.get("termination_tilt_deg", 60.0))
+    if not 0.0 < termination_tilt_deg <= 180.0:
+        raise ValueError("termination_tilt_deg must be in (0, 180]")
     terminations = {
         "time_out": TerminationTermCfg(func=envs_mdp.time_out, time_out=True),
         "body_ground": TerminationTermCfg(
             func=_terminate_body_contact,
             params={"sensor_name": body_contact.name},
         ),
+        "leg_ground": TerminationTermCfg(
+            func=_terminate_body_contact,
+            params={"sensor_name": leg_contact.name},
+        ),
         "bad_orientation": TerminationTermCfg(
             func=velocity_mdp.bad_orientation,
-            params={"limit_angle": math.radians(60.0)},
+            params={"limit_angle": math.radians(termination_tilt_deg)},
         ),
     }
     curriculum = {}
@@ -1470,7 +2222,7 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
         scene=SceneCfg(
             terrain=_terrain_cfg(name, play=play),
             entities={"robot": _make_robot_cfg(name)},
-            sensors=(scan, wheel_contact, body_contact),
+            sensors=(scan, wheel_contact, body_contact, leg_contact),
             num_envs=1 if play else 4096,
         ),
         observations=observations,
@@ -1494,6 +2246,7 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
             contact_sensor_maxmatch=512,
             mujoco=MujocoCfg(
                 timestep=PHYSICS_DT,
+                integrator="implicitfast",
                 iterations=40,
                 ls_iterations=30,
                 ccd_iterations=50,
@@ -1515,7 +2268,7 @@ def _ppo_cfg(name: str, num_envs: int = 4096) -> RslRlOnPolicyRunnerCfg:
         seed=42,
         num_steps_per_env=24,
         max_iterations=iterations,
-        save_interval=10 if name == "composite" else 50,
+        save_interval=checkpoint_interval(iterations),
         experiment_name="diablo_xingtian_course",
         run_name=name,
         logger="tensorboard",
@@ -1577,7 +2330,7 @@ def register() -> None:
             env_cfg=_make_env_cfg(name),
             play_env_cfg=_make_env_cfg(name, play=True),
             rl_cfg=_ppo_cfg(name),
-            runner_cls=VelocityOnPolicyRunner,
+            runner_cls=MjlabOnPolicyRunner,
         )
 
 
@@ -1620,18 +2373,11 @@ def _load_runner(
     device: str,
 ):
     contract_path = checkpoint.parent / "contract.json"
-    if not contract_path.is_file():
-        raise FileNotFoundError(f"Missing run contract: {contract_path}")
-    run_contract = json.loads(contract_path.read_text(encoding="utf-8"))
-    verify_interface_contract(run_contract["contract"])
-    if run_contract["stage"] != stage_name:
-        raise ValueError(
-            f"Checkpoint stage is {run_contract['stage']}, requested {stage_name}"
-        )
+    load_run_contract(contract_path, stage_name)
     env_cfg, agent_cfg = _eval_env_cfg(stage_name, seed, profile_index)
     env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
     wrapped = RslRlVecEnvWrapper(env, clip_actions=1.0)
-    runner = VelocityOnPolicyRunner(wrapped, asdict(agent_cfg), device=device)
+    runner = MjlabOnPolicyRunner(wrapped, asdict(agent_cfg), device=device)
     runner.load(
         str(checkpoint),
         load_cfg={"actor": True},
@@ -1654,11 +2400,14 @@ def _run_episode(
     try:
         wrapped.seed(seed)
         obs, _ = wrapped.reset()
+        validate_policy_io(obs)
+        verify_reset_state(env)
         policy = runner.get_inference_policy(device=device)
         episode_return = 0.0
         for _ in range(env.max_episode_length):
             with torch.inference_mode():
                 action = policy(obs)
+                validate_policy_io(obs, action)
                 obs, reward, done, extras = wrapped.step(action)
             if not torch.isfinite(reward).all():
                 raise FloatingPointError("Evaluation produced a non-finite reward")
@@ -1801,19 +2550,39 @@ def export_checkpoint(
     del wrapped
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
+        sample_tensor = env.observation_manager.compute()["actor"][:1]
+        validate_policy_io(sample_tensor)
+        sample = sample_tensor.cpu().numpy()
         runner.export_policy_to_onnx(str(output_dir), filename=filename)
         onnx_path = output_dir / filename
-        sample = env.observation_manager.compute()["actor"][:1].cpu().numpy()
         import onnxruntime as ort
 
         session = ort.InferenceSession(
             str(onnx_path), providers=["CPUExecutionProvider"]
         )
-        input_name = session.get_inputs()[0].name
+        model_input = session.get_inputs()[0]
+        model_output = session.get_outputs()[0]
+        input_name = model_input.name
         output = session.run(None, {input_name: sample})[0]
-        if output.shape != (1, 6) or not np.isfinite(output).all():
+        if (
+            model_input.type != "tensor(float)"
+            or model_input.shape[-1] != OBSERVATION_SHAPE[0]
+            or sample.dtype != np.float32
+        ):
             raise RuntimeError(
-                f"Exported ONNX returned invalid shape/value: {output.shape}"
+                "Exported ONNX input must be float32 with "
+                f"{OBSERVATION_SHAPE[0]} features, got {sample.dtype} "
+                f"{model_input.type}{model_input.shape}"
+            )
+        if (
+            model_output.type != "tensor(float)"
+            or output.shape != (sample.shape[0], ACTION_SHAPE[0])
+            or output.dtype != np.float32
+            or not np.isfinite(output).all()
+        ):
+            raise RuntimeError(
+                "Exported ONNX output must be finite float32"
+                f"[N,{ACTION_SHAPE[0]}], got {output.dtype}{output.shape}"
             )
         contract = interface_contract(COURSE)
         _attach_onnx_metadata(
@@ -1823,8 +2592,10 @@ def export_checkpoint(
                 "checkpoint": checkpoint.name,
                 "checkpoint_sha256": sha256(checkpoint),
                 "interface_sha256": contract["sha256"],
-                "observation_shape": "1,160",
-                "action_shape": "1,6",
+                "observation_shape": f"{sample.shape[0]},{OBSERVATION_SHAPE[0]}",
+                "observation_dtype": OBSERVATION_DTYPE,
+                "action_shape": f"{output.shape[0]},{ACTION_SHAPE[0]}",
+                "action_dtype": ACTION_DTYPE,
                 "control_dt_s": CONTROL_DT,
                 "simulation_only": True,
                 "hardware_authorized": False,
@@ -1835,78 +2606,142 @@ def export_checkpoint(
         env.close()
 
 
+def _selection_metrics(result: dict[str, Any], gate: dict[str, Any]) -> dict[str, Any]:
+    scored = [gate_score(run["metrics"], gate) for run in result["runs"]]
+    by_seed: dict[int, list[float]] = {}
+    for run, score in zip(result["runs"], scored, strict=True):
+        by_seed.setdefault(int(run["seed"]), []).append(float(score["score"]))
+    result = dict(result)
+    result.update(
+        {
+            "score": float(np.mean([score["score"] for score in scored])),
+            "pass_rate": float(np.mean([score["passed"] for score in scored])),
+            "worst_seed_score": min(float(np.mean(values)) for values in by_seed.values()),
+            "minimum_margin": min(score["minimum_margin"] for score in scored),
+            "mean_speed_mae_mps": float(
+                np.mean([run["metrics"]["speed_mae_mps"] for run in result["runs"]])
+            ),
+            "mean_yaw_mae_rad_s": float(
+                np.mean([run["metrics"]["yaw_mae_rad_s"] for run in result["runs"]])
+            ),
+        }
+    )
+    return result
+
+
 def select_policy_best(
     run_dir: Path,
     device: str = "cuda:0",
+    stage_name: str = "composite",
 ) -> dict[str, Any]:
     device = require_cuda(device)
     run_dir = run_dir.resolve()
     contract_path = run_dir / "contract.json"
-    if not contract_path.is_file():
-        raise FileNotFoundError(f"Missing training contract: {contract_path}")
-    verify_interface_contract(json.loads(contract_path.read_text(encoding="utf-8")))
-    candidates = candidate_checkpoints(run_dir)
-    screened = []
-    for checkpoint in candidates:
-        result = evaluate_checkpoint("composite", checkpoint, SCREEN_SEEDS, device)
-        screened.append(result)
-        print(
-            f"[screen] {checkpoint.name}: "
-            f"{'PASS' if result['passed'] else 'FAIL'}"
-        )
+    load_run_contract(contract_path, stage_name)
+    stage = COURSE.stage(stage_name)
+    gate = stage["gate"]
+    output_dir = run_dir / "bestmodel"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for path in (
+        output_dir / "bestmodel.pt",
+        output_dir / "bestmodel.onnx",
+        output_dir / "contract.json",
+        output_dir / "selection.json",
+        run_dir / "selection.json",
+        run_dir / "policy-best.pt",
+        run_dir / "policy-best.onnx",
+    ):
+        path.unlink(missing_ok=True)
 
-    verified = []
-    for result in screened:
-        if not result["passed"]:
+    candidates = candidate_checkpoints(run_dir)
+    probes = []
+    verifications = []
+    for checkpoint in candidates:
+        probe = _selection_metrics(
+            evaluate_checkpoint(
+                stage_name,
+                checkpoint,
+                [SELECTION_PROBE_SEED],
+                device,
+            ),
+            gate,
+        )
+        probes.append(probe)
+        print(
+            f"[probe] {checkpoint.name} seed={SELECTION_PROBE_SEED}: "
+            f"{'PASS' if probe['passed'] else 'FAIL'}"
+        )
+        if not probe["passed"]:
             continue
-        checkpoint = Path(result["checkpoint"])
-        candidate = evaluate_checkpoint("composite", checkpoint, VERIFY_SEEDS, device)
-        candidate["screen_runs"] = result["runs"]
-        verified.append(candidate)
+        candidate = _selection_metrics(
+            evaluate_checkpoint(
+                stage_name,
+                checkpoint,
+                SELECTION_VERIFY_SEEDS,
+                device,
+            ),
+            gate,
+        )
+        candidate["probe_runs"] = probe["runs"]
+        verifications.append(candidate)
         print(
             f"[verify] {checkpoint.name}: "
             f"{'PASS' if candidate['passed'] else 'FAIL'} "
             f"score={candidate.get('score', 0.0):.3f}"
         )
+
+    qualified = [candidate for candidate in verifications if candidate["passed"]]
     try:
-        ranking = rank_policy_candidates(verified)
+        ranking = rank_policy_candidates(qualified)
     except ValueError as error:
         failure = {
-            "stage": "composite",
-            "screen_seeds": list(SCREEN_SEEDS),
-            "verify_seeds": list(VERIFY_SEEDS),
-            "candidates": screened,
-            "verified": verified,
+            "stage": stage_name,
+            "run_dir": str(run_dir),
+            "probe_seed": SELECTION_PROBE_SEED,
+            "verification_seeds": list(SELECTION_VERIFY_SEEDS),
+            "probe_count": len(probes),
+            "verification_count": len(verifications),
+            "qualified_count": len(qualified),
+            "probes": probes,
+            "verifications": verifications,
+            "qualified": qualified,
             "error": str(error),
         }
-        (run_dir / "selection.json").write_text(
+        (output_dir / "selection.json").write_text(
             json.dumps(failure, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
         raise
+
     best = ranking[0]
     selected_checkpoint = Path(best["checkpoint"])
-    onnx_path = export_checkpoint(
-        "composite",
-        selected_checkpoint,
-        run_dir,
-        filename="policy-best.onnx",
-        device=device,
-    )
-    best_copy = run_dir / "policy-best.pt"
+    shutil.copy2(contract_path, output_dir / "contract.json")
+    best_copy = output_dir / "bestmodel.pt"
     shutil.copy2(selected_checkpoint, best_copy)
     if sha256(best_copy) != best["checkpoint_sha256"]:
-        raise RuntimeError("policy-best.pt does not match the selected checkpoint")
+        raise RuntimeError("bestmodel.pt does not match the selected checkpoint")
+
+    onnx_path = export_checkpoint(
+        stage_name,
+        best_copy,
+        output_dir,
+        filename="bestmodel.onnx",
+        device=device,
+    )
     blind = evaluate_checkpoint(
-        "composite", run_dir / "policy-best.pt", BLIND_SEEDS, device
+        stage_name, best_copy, BLIND_SEEDS, device
     )
     limit = evaluate_checkpoint(
-        "composite", run_dir / "policy-best.pt", LIMIT_SEEDS, device
+        stage_name, best_copy, LIMIT_SEEDS, device
     )
     selection = {
-        "stage": "composite",
-        "screen_seeds": list(SCREEN_SEEDS),
-        "verify_seeds": list(VERIFY_SEEDS),
+        "stage": stage_name,
+        "run_dir": str(run_dir),
+        "probe_seed": SELECTION_PROBE_SEED,
+        "verification_seeds": list(SELECTION_VERIFY_SEEDS),
+        "probe_count": len(probes),
+        "verification_count": len(verifications),
+        "qualified_count": len(qualified),
         "blind_seeds": list(BLIND_SEEDS),
         "limit_seeds": list(LIMIT_SEEDS),
         "score_weights": {
@@ -1916,18 +2751,21 @@ def select_policy_best(
             "terrain": 0.15,
             "efficiency": 0.10,
         },
-        "candidates": screened,
-        "verified": verified,
+        "probes": probes,
+        "verifications": verifications,
+        "qualified": qualified,
         "ranking": ranking,
         "selected": best,
-        "policy_best_pt": str(best_copy),
-        "policy_best_pt_sha256": sha256(best_copy),
-        "policy_best_onnx": str(onnx_path),
-        "policy_best_onnx_sha256": sha256(onnx_path),
+        "source_checkpoint": str(selected_checkpoint),
+        "source_checkpoint_sha256": best["checkpoint_sha256"],
+        "bestmodel_pt": str(best_copy),
+        "bestmodel_pt_sha256": sha256(best_copy),
+        "bestmodel_onnx": str(onnx_path),
+        "bestmodel_onnx_sha256": sha256(onnx_path),
         "blind": blind,
         "limit": limit,
     }
-    (run_dir / "selection.json").write_text(
+    (output_dir / "selection.json").write_text(
         json.dumps(selection, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )

@@ -55,6 +55,21 @@ def validate_model():
     vi = model.jnt_dofadr[ids]
     assert model.nu == 6 and model.neq == 2 and model.nv == 16
     assert np.all(model.body_mass[1:] > 0) and np.all(model.body_inertia[1:] > 0)
+    np.testing.assert_allclose(
+        model.body_ipos[model.body("diablo_base_link").id],
+        [-0.001, 0.0, 0.009267],
+        atol=1e-8,
+    )
+    np.testing.assert_allclose(
+        model.body_ipos[model.body("left_fake_thigh_link").id],
+        [0.001204, 0.0, -0.066749],
+        atol=1e-8,
+    )
+    np.testing.assert_allclose(
+        model.body_ipos[model.body("left_shank_link").id],
+        [0.092381, 0.000001, 0.012349],
+        atol=1e-8,
+    )
     max_fk = max_loop = max_virtual_work = 0.0
     samples = 0
     # Wide non-singular configurations, both sides, not only the reset pose.

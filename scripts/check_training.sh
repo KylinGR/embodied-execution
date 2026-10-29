@@ -29,10 +29,11 @@ if [[ "${DIABLO_GPU_CHECK:-0}" == "1" ]]; then
     printf 'GPU evaluation infrastructure failed; evidence: %s\n' "$run_dir" >&2
     exit "$evaluation_status"
   fi
-  "$python_bin" -m diablo_training.cli export \
-    --stage flat_balance --checkpoint "$checkpoint" \
-    --output "$run_dir/export" > "$run_dir/export.log"
-  test -s "$run_dir/export/policy.onnx"
+  if find "$run_dir/logs/rsl_rl/diablo_xingtian_course" \
+    -type f -name '*.onnx' | grep -q .; then
+    printf 'Training must not export ONNX automatically.\n' >&2
+    exit 1
+  fi
 else
   printf 'GPU checks skipped. Set DIABLO_GPU_CHECK=1 on a CUDA Linux host.\n'
 fi

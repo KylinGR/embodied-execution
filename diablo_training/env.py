@@ -7,6 +7,15 @@ from gymnasium import spaces
 import mujoco
 import numpy as np
 
+from .contract import (
+    ACTION_DTYPE,
+    ACTION_SHAPE,
+    HEADING_ERROR_OBS_SCALE,
+    OBSERVATION_DTYPE,
+    OBSERVATION_SHAPE,
+    PROPRIO_FRAME_DIM,
+    PROPRIO_HISTORY_LENGTH,
+)
 from .control import decode_action
 from .model import (
     CONTROL_DT,
@@ -70,19 +79,31 @@ class DiabloEnv(gym.Env):
         self.vi = self.model.jnt_dofadr[joints]
         self.base_id = self.model.body("diablo_base_link").id
         self.floor_id = self.model.geom("floor").id
-        self.action_space = spaces.Box(-1.0, 1.0, shape=(6,), dtype=np.float32)
+        self.action_space = spaces.Box(
+            -1.0,
+            1.0,
+            shape=ACTION_SHAPE,
+            dtype=np.dtype(ACTION_DTYPE),
+        )
         self.observation_space = spaces.Box(
-            -100.0, 100.0, shape=(125,), dtype=np.float32
+            -100.0,
+            100.0,
+            shape=OBSERVATION_SHAPE,
+            dtype=np.dtype(OBSERVATION_DTYPE),
         )
         self.renderer = None
         self.camera = mujoco.MjvCamera()
         self.camera.distance, self.camera.azimuth, self.camera.elevation = 1.6, 135, -20
-        self.history = np.zeros((5, 25), dtype=np.float32)
+        self.history = np.zeros(
+            (PROPRIO_HISTORY_LENGTH, PROPRIO_FRAME_DIM),
+            dtype=np.dtype(OBSERVATION_DTYPE),
+        )
         self.previous_action = np.zeros(6)
         self.gravity_estimate = np.array([0.0, 0.0, -1.0])
         self.steps = 0
         self.task = 0
         self.speed = 0.2
+        self.start_heading = 0.0
         self.reference_height = 0.2
         self.stop_origin = None
         self.command = np.zeros(3)
@@ -109,6 +130,12 @@ class DiabloEnv(gym.Env):
         gyro = self.data.sensor("gyro").data.copy()
         q = self.data.qpos[self.qi[LEGS]] - DEFAULT_Q[LEGS]
         dq = self.data.qvel[self.vi] * OBSERVATION_SIGNS
+        rotation = self.data.xmat[self.base_id].reshape(3, 3)
+        heading = float(np.arctan2(rotation[1, 0], rotation[0, 0]))
+        heading_error = np.arctan2(
+            np.sin(heading - self.start_heading),
+            np.cos(heading - self.start_heading),
+        )
         if self.config.observation_noise:
             gyro += self.np_random.normal(0, 0.01, 3)
             dq += self.np_random.normal(0, 0.02, 6)
@@ -116,7 +143,11 @@ class DiabloEnv(gym.Env):
             (
                 gyro * 0.25,
                 self.gravity_estimate,
-                self.command * [10.0, 0.25, 5.0],
+                [
+                    self.command[0] * 10.0,
+                    self.command[1] * 0.25,
+                    heading_error * HEADING_ERROR_OBS_SCALE,
+                ],
                 q,
                 dq * 0.05,
                 self.previous_action,
@@ -160,6 +191,7 @@ class DiabloEnv(gym.Env):
             raise ValueError("Requested speed is outside the configured command range")
         self.data.qpos[2] = TARGET_BASE_HEIGHT_M
         self.data.qpos[3:7] = [1, 0, 0, 0]
+        self.start_heading = 0.0
         set_pose(self.model, self.data, DEFAULT_Q)
         mujoco.mj_forward(self.model, self.data)
         self.reference_height = TARGET_BASE_HEIGHT_M

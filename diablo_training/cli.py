@@ -12,7 +12,15 @@ import subprocess
 import sys
 import time
 
-from .contract import SCREEN_SEEDS, budget_iterations, load_course, task_id
+from .contract import (
+    ACTION_SHAPE,
+    SCREEN_SEEDS,
+    budget_iterations,
+    checkpoint_interval,
+    load_course,
+    load_run_contract,
+    task_id,
+)
 from .resources import ROOT, fetch
 
 
@@ -61,7 +69,9 @@ def doctor(args) -> None:
             "versions": versions(),
             "model": metadata(env.model),
             "observation_shape": list(env.observation_space.shape),
+            "observation_dtype": str(env.observation_space.dtype),
             "action_shape": list(env.action_space.shape),
+            "action_dtype": str(env.action_space.dtype),
             "gymnasium_check": "passed",
             "mechanics": validate_model(),
             "training_backend": "mjlab",
@@ -78,7 +88,14 @@ def doctor(args) -> None:
 def gpu_doctor(args) -> None:
     import torch
     from mjlab.envs import ManagerBasedRlEnv
-    from .mjlab_tasks import COURSE, get_task_cfgs, require_cuda
+    from .mjlab_tasks import (
+        COURSE,
+        get_task_cfgs,
+        require_cuda,
+        validate_policy_io,
+        verify_reset_state,
+        verify_zero_action_stance,
+    )
 
     device = require_cuda(args.device)
     env_cfg, _ = get_task_cfgs("flat_balance", play=True)
@@ -86,8 +103,12 @@ def gpu_doctor(args) -> None:
     env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
     try:
         obs, _ = env.reset(seed=2001)
-        action = env.action_manager.action.new_zeros((1, 6))
+        validate_policy_io(obs)
+        reset_check = verify_reset_state(env)
+        stance_check = verify_zero_action_stance(env)
+        action = env.action_manager.action.new_zeros((1, ACTION_SHAPE[0]))
         obs, reward, terminated, truncated, _ = env.step(action)
+        validate_policy_io(obs)
         result = {
             "device": device,
             "gpu": torch.cuda.get_device_name(torch.device(device)),
@@ -96,11 +117,18 @@ def gpu_doctor(args) -> None:
             "observation_shapes": {
                 name: list(value.shape) for name, value in obs.items()
             },
+            "observation_dtypes": {
+                name: str(value.dtype).removeprefix("torch.")
+                for name, value in obs.items()
+            },
             "action_shape": list(action.shape),
+            "action_dtype": str(action.dtype).removeprefix("torch."),
             "finite_reward": bool(reward.isfinite().all().item()),
             "terminated": bool(terminated.item()),
             "truncated": bool(truncated.item()),
-            "scope": "one environment, one zero-action physics step",
+            "reset_check": reset_check,
+            "stance_check": stance_check,
+            "scope": "reset closure, 20-step zero-action stance, one extra physics step",
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
     finally:
@@ -131,7 +159,12 @@ def list_stages(args) -> None:
 def smoke(args) -> None:
     import torch
     from mjlab.envs import ManagerBasedRlEnv
-    from .mjlab_tasks import get_task_cfgs, require_cuda
+    from .mjlab_tasks import (
+        get_task_cfgs,
+        require_cuda,
+        verify_reset_state,
+        verify_zero_action_stance,
+    )
 
     device = require_cuda(args.device)
     env_cfg, _ = get_task_cfgs(args.stage, play=True)
@@ -141,6 +174,8 @@ def smoke(args) -> None:
     out = fresh_directory(args.output, "smoke")
     try:
         env.reset(seed=args.seed)
+        reset_check = verify_reset_state(env)
+        stance_check = verify_zero_action_stance(env)
         trace = []
         for step in range(args.steps):
             action = torch.rand(
@@ -163,6 +198,8 @@ def smoke(args) -> None:
             "n_envs": args.n_envs,
             "steps": len(trace),
             "trace": trace,
+            "reset_check": reset_check,
+            "stance_check": stance_check,
             "physics_pipeline": "passed",
             "training": "not run",
         }
@@ -186,6 +223,13 @@ def _resume_args(checkpoint: Path | None, log_root: Path) -> list[str]:
             "Resume checkpoint must be inside "
             f"{expected_parent}/<run>/<checkpoint>"
         )
+    contract_path = checkpoint.parent / "contract.json"
+    if not contract_path.is_file():
+        raise ValueError(
+            "Resume checkpoint run has no contract.json; retrain it with the "
+            "current policy interface"
+        )
+    load_run_contract(contract_path)
     return [
         "--agent.resume",
         "True",
@@ -215,6 +259,7 @@ def train_stage(
         if iterations_override is not None
         else budget_iterations(int(course.stage(stage)["budget"]), n_envs, 24)
     )
+    save_interval = checkpoint_interval(iterations)
     gpu_value = "all" if gpu_ids == "all" else str(list(gpu_ids))
     command = [
         sys.executable,
@@ -226,7 +271,7 @@ def train_stage(
         "--agent.max-iterations",
         str(iterations),
         "--agent.save-interval",
-        "10" if stage == "composite" else "50",
+        str(save_interval),
         "--agent.experiment-name",
         "diablo_xingtian_course",
         "--agent.run-name",
@@ -343,8 +388,8 @@ def select(args, run_dir: Path | None = None) -> None:
         json.dumps(
             {
                 "selected": result["selected"],
-                "policy_best_pt": result["policy_best_pt"],
-                "policy_best_onnx": result["policy_best_onnx"],
+                "bestmodel_pt": result["bestmodel_pt"],
+                "bestmodel_onnx": result["bestmodel_onnx"],
                 "blind_passed": result["blind"]["passed"],
                 "limit_passed": result["limit"]["passed"],
             },

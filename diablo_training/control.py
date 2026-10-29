@@ -2,7 +2,17 @@
 
 import numpy as np
 
-from .model import DEFAULT_Q, NO_LOAD_SPEED, OBSERVATION_SIGNS, STALL_TORQUE, WHEELS
+from .model import (
+    DEFAULT_Q,
+    HIP_DAMPING_GAIN,
+    HIP_POSITION_GAIN,
+    KNEE_DAMPING_GAIN,
+    KNEE_POSITION_GAIN,
+    NO_LOAD_SPEED,
+    OBSERVATION_SIGNS,
+    STALL_TORQUE,
+    WHEELS,
+)
 
 
 def radial_feedforward(motor_q, force=60.0):
@@ -15,10 +25,14 @@ def decode_action(action, motor_q, motor_dq, mode="position_velocity"):
     if mode == "torque":
         requested = action * STALL_TORQUE * OBSERVATION_SIGNS
     elif mode == "position_velocity":
-        requested = np.array([15, 18, 0, 15, 18, 0]) * (
+        requested = np.array(
+            [HIP_POSITION_GAIN, KNEE_POSITION_GAIN, 0, HIP_POSITION_GAIN, KNEE_POSITION_GAIN, 0]
+        ) * (
             DEFAULT_Q + action * 0.5 - motor_q
         )
-        requested -= np.array([0.3, 0.2, 0.3, 0.3, 0.2, 0.3]) * motor_dq
+        requested -= np.array(
+            [HIP_DAMPING_GAIN, KNEE_DAMPING_GAIN, 0.3, HIP_DAMPING_GAIN, KNEE_DAMPING_GAIN, 0.3]
+        ) * motor_dq
         requested[WHEELS] -= 0.3 * action[WHEELS] * 10
         requested += radial_feedforward(motor_q)
     else:
