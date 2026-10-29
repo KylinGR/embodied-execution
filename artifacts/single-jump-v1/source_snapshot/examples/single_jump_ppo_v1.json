@@ -1,0 +1,10 @@
+{
+  "environment_class": "single_jump_v1:SingleJumpV1Env",
+  "environment": {"episode_seconds": 20.0, "action_mode": "torque"},
+  "ppo": {
+    "n_steps": 512, "batch_size": 512, "n_epochs": 4,
+    "learning_rate": 0.00005, "gamma": 0.995, "gae_lambda": 0.95,
+    "ent_coef": 0.0, "clip_range": 0.1, "target_kl": 0.015,
+    "policy_kwargs": {"net_arch": [128, 128], "log_std_init": -4.0}
+  }
+}

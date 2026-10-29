@@ -1,0 +1,164 @@
+{
+  "environment": {
+    "episode_seconds": 20.0,
+    "max_speed": 0.5,
+    "observation_noise": false,
+    "action_mode": "torque"
+  },
+  "environment_class": "single_jump_v1:SingleJumpV1Env",
+  "contract": {
+    "interface_version": 3,
+    "implementation_sha256": {
+      "model.py": "10d58c721b87afa9eb60aff57342e0a07621c51a26ea9648d239e0c13c2735fe",
+      "control.py": "825c1bd8496a77d62737f1efbd29b19ccb518c4cba76d53e5f1518d6d9394a54",
+      "env.py": "7a40aac0bc471be64c3fa5ae7d5453ff06eb9d622e8a23df9b805b3fa40968f7",
+      "task_module": "493269f25c5aed93d6e2fb22a1f5e5dda3a95d5ca49eb372991a1429370f1a8d",
+      "task_hierarchy": {
+        "single_jump_v1": "493269f25c5aed93d6e2fb22a1f5e5dda3a95d5ca49eb372991a1429370f1a8d",
+        "single_jump_torque": "6fa2359205d3e20e9662e8f617ce59fc3dc3dd2aa42ce62a92ed5c218dda9f4d",
+        "single_jump": "65bce88f0a789ea138088a2cc2d5eb73e33302ef45ec82580df59cdce67e2943",
+        "stable_landing_v3": "7b0061eac0e12dce500189aeb2889b13315c7541d6f11bf9782ba4a951069fef",
+        "diablo_training.env": "7a40aac0bc471be64c3fa5ae7d5453ff06eb9d622e8a23df9b805b3fa40968f7"
+      }
+    },
+    "mujoco_version": "3.8.1",
+    "model": {
+      "source": "resources/robots/diablo/urdf/diablo.urdf",
+      "source_sha256": "cdcaa7720a660bddfe9c2dd238a3c3fe91adccdc3255c5b8491d77344bf62116",
+      "upstream_commit": "590085a027fc9e20b1d7e976714cd195488b96b6",
+      "mechanism_commit": "3c9abbcaeb93911932b9c14777c4e75cc8c1470e",
+      "mechanism_sha256": "91b63e318ace76132bb578c2dfdead9bff3920017647eeac975c67576ba28bc4",
+      "model_scope": "CAD reference with two explicit parallelogram closures; not hardware calibrated",
+      "joints": [
+        "left_hip_motor",
+        "left_knee_motor",
+        "left_wheel_motor",
+        "right_hip_motor",
+        "right_knee_motor",
+        "right_wheel_motor"
+      ],
+      "actuators": 6,
+      "closure_constraints": 2,
+      "default_joint_rad": [
+        0.5,
+        -1.0,
+        0.0,
+        0.5,
+        -1.0,
+        0.0
+      ],
+      "observation_velocity_signs": [
+        1.0,
+        1.0,
+        -1.0,
+        1.0,
+        1.0,
+        -1.0
+      ],
+      "mass_kg": 21.019506,
+      "physics_dt_s": 0.002,
+      "control_dt_s": 0.01,
+      "simulation_only": true,
+      "hardware_authorized": false,
+      "motor_reference": {
+        "source": "arXiv:2407.21500 Table II",
+        "stall_nm": 17.0,
+        "no_load_rad_s": 23.038346126325152,
+        "rated_nm": 9.6
+      },
+      "limits_scope": "Published reference motor, assumed linear torque-speed envelope; not firmware/thermal calibration"
+    },
+    "action_mode": "torque",
+    "observation": {
+      "shape": [
+        148
+      ],
+      "base": "143 sensor LQR observation",
+      "extras": [
+        "normalized episode clock",
+        "four sampled pulse parameters"
+      ],
+      "order": "143 then clock then pulse"
+    },
+    "task_class": "single_jump_v1:SingleJumpV1Env",
+    "sha256": "783ad18c668a8f2ee095d210a726ec1f016d5dd84022b366c73ebc12719ae2d8"
+  },
+  "ppo": {
+    "n_steps": 512,
+    "batch_size": 512,
+    "n_epochs": 4,
+    "learning_rate": 5e-05,
+    "gamma": 0.995,
+    "gae_lambda": 0.95,
+    "ent_coef": 0.0,
+    "policy_kwargs": {
+      "net_arch": [
+        128,
+        128
+      ],
+      "log_std_init": -4.0
+    },
+    "clip_range": 0.1,
+    "target_kl": 0.015
+  },
+  "model": {
+    "source": "resources/robots/diablo/urdf/diablo.urdf",
+    "source_sha256": "cdcaa7720a660bddfe9c2dd238a3c3fe91adccdc3255c5b8491d77344bf62116",
+    "upstream_commit": "590085a027fc9e20b1d7e976714cd195488b96b6",
+    "mechanism_commit": "3c9abbcaeb93911932b9c14777c4e75cc8c1470e",
+    "mechanism_sha256": "91b63e318ace76132bb578c2dfdead9bff3920017647eeac975c67576ba28bc4",
+    "model_scope": "CAD reference with two explicit parallelogram closures; not hardware calibrated",
+    "joints": [
+      "left_hip_motor",
+      "left_knee_motor",
+      "left_wheel_motor",
+      "right_hip_motor",
+      "right_knee_motor",
+      "right_wheel_motor"
+    ],
+    "actuators": 6,
+    "closure_constraints": 2,
+    "default_joint_rad": [
+      0.5,
+      -1.0,
+      0.0,
+      0.5,
+      -1.0,
+      0.0
+    ],
+    "observation_velocity_signs": [
+      1.0,
+      1.0,
+      -1.0,
+      1.0,
+      1.0,
+      -1.0
+    ],
+    "mass_kg": 21.019506,
+    "physics_dt_s": 0.002,
+    "control_dt_s": 0.01,
+    "simulation_only": true,
+    "hardware_authorized": false,
+    "motor_reference": {
+      "source": "arXiv:2407.21500 Table II",
+      "stall_nm": 17.0,
+      "no_load_rad_s": 23.038346126325152,
+      "rated_nm": 9.6
+    },
+    "limits_scope": "Published reference motor, assumed linear torque-speed envelope; not firmware/thermal calibration"
+  },
+  "upstream_commit": "590085a027fc9e20b1d7e976714cd195488b96b6",
+  "versions": {
+    "mujoco": "3.8.1",
+    "gymnasium": "1.4.0",
+    "stable-baselines3": "2.9.0",
+    "torch": "2.8.0+cu126",
+    "numpy": "2.4.6"
+  },
+  "requested_timesteps": 200000,
+  "n_envs": 4,
+  "seed": 43,
+  "device": "cuda",
+  "resume": null,
+  "parameter_sha256_before": "22aed01a4291aa897440be30a742035d7702e8bd6b1aae843b89135e83070140"
+}

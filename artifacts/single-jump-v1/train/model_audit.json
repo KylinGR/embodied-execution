@@ -1,0 +1,104 @@
+{
+  "model_audit_passed": true,
+  "before_parameter_sha256": "22aed01a4291aa897440be30a742035d7702e8bd6b1aae843b89135e83070140",
+  "after_parameter_sha256": "ad490474e0b947066b3ccac900fb85b77fb8c73e0143145a71ec1120c2324165",
+  "contract_sha256": "783ad18c668a8f2ee095d210a726ec1f016d5dd84022b366c73ebc12719ae2d8",
+  "parameter_changes": {
+    "actor": [
+      {
+        "name": "log_std",
+        "changed": true,
+        "maximum_absolute_change": 0.005431413650512695,
+        "l2_change": 0.00696928565282344
+      },
+      {
+        "name": "mlp_extractor.policy_net.0.weight",
+        "changed": true,
+        "maximum_absolute_change": 0.0006307102739810944,
+        "l2_change": 0.01033399113159403
+      },
+      {
+        "name": "mlp_extractor.policy_net.0.bias",
+        "changed": true,
+        "maximum_absolute_change": 0.0005118169356137514,
+        "l2_change": 0.002117009203908248
+      },
+      {
+        "name": "mlp_extractor.policy_net.2.weight",
+        "changed": true,
+        "maximum_absolute_change": 0.0003185076639056206,
+        "l2_change": 0.010417263373529367
+      },
+      {
+        "name": "mlp_extractor.policy_net.2.bias",
+        "changed": true,
+        "maximum_absolute_change": 0.0003099266323260963,
+        "l2_change": 0.0020221472539276963
+      },
+      {
+        "name": "action_net.weight",
+        "changed": true,
+        "maximum_absolute_change": 0.003520667552947998,
+        "l2_change": 0.01626354525116235
+      },
+      {
+        "name": "action_net.bias",
+        "changed": true,
+        "maximum_absolute_change": 0.00018858567636925727,
+        "l2_change": 0.0003017399578636879
+      }
+    ],
+    "critic": [
+      {
+        "name": "mlp_extractor.value_net.0.weight",
+        "changed": true,
+        "maximum_absolute_change": 0.04921448975801468,
+        "l2_change": 2.239067141501911
+      },
+      {
+        "name": "mlp_extractor.value_net.0.bias",
+        "changed": true,
+        "maximum_absolute_change": 0.0471181757748127,
+        "l2_change": 0.3238126226349438
+      },
+      {
+        "name": "mlp_extractor.value_net.2.weight",
+        "changed": true,
+        "maximum_absolute_change": 0.07187259197235107,
+        "l2_change": 4.085940781128497
+      },
+      {
+        "name": "mlp_extractor.value_net.2.bias",
+        "changed": true,
+        "maximum_absolute_change": 0.05765930563211441,
+        "l2_change": 0.3054170452720409
+      },
+      {
+        "name": "value_net.weight",
+        "changed": true,
+        "maximum_absolute_change": 0.09417154639959335,
+        "l2_change": 0.8997906556229072
+      },
+      {
+        "name": "value_net.bias",
+        "changed": true,
+        "maximum_absolute_change": 0.07078948616981506,
+        "l2_change": 0.07078948616981506
+      }
+    ],
+    "shared_or_other": []
+  },
+  "frozen_source_matches": {
+    "examples/single_jump_v1.py": true,
+    "examples/single_jump.py": true,
+    "examples/single_jump_torque.py": true,
+    "examples/qualify_jump.py": true,
+    "examples/jump_metrics.py": true,
+    "examples/single_jump_ppo_v1.json": true
+  },
+  "actual_timesteps": 200704,
+  "actual_additional_timesteps": 200704,
+  "training_wall_seconds": 489.4471712320001,
+  "policy_file_sha256": "7e0da7e1542830881d5ae7c173324efd737c17ea0d6dd5676d178bdb82183f1f",
+  "scope": "Model update and source audit only; physical qualification pending."
+}

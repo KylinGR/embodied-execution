@@ -1,0 +1,19 @@
+{
+  "diablo_training/cli.py": "ddf051eba3bf20a205704bc4d5747b035a43d3ba6eb9fd18757d661c09f77309",
+  "diablo_training/contract.py": "62b2745629dab958d9b1b47e467227f3a156a30144ea06568f78677d5da34661",
+  "diablo_training/control.py": "825c1bd8496a77d62737f1efbd29b19ccb518c4cba76d53e5f1518d6d9394a54",
+  "diablo_training/env.py": "7a40aac0bc471be64c3fa5ae7d5453ff06eb9d622e8a23df9b805b3fa40968f7",
+  "diablo_training/model.py": "10d58c721b87afa9eb60aff57342e0a07621c51a26ea9648d239e0c13c2735fe",
+  "diablo_training/resources.py": "0a6e9aef2777fc12b655aba31a0c2b727062fd6ffb02a0cb77e1cc825c8aacae",
+  "diablo_training/upstream.lock.json": "163747b0358161d0405388b198cbebb30b05165d9e52fea547f1590a1ff5c7de",
+  "diablo_training/validation.py": "2186a69ca66f46c066f573de785664c1870d44cd73a41d833d557aaeca2cf5b6",
+  "diablo_training/__init__.py": "59e8b88150ef31131d2264b87678efd267068e9a3913831cc978a91c9220c4ee",
+  "examples/check_jump_metrics.py": "97473b8b97d9a4505fcf548f98b8635b3a1d46c54f472a1680ae7dc9f93bf2ae",
+  "examples/jump_metrics.py": "b654eddd011c9f619a57f83545d0a4c06779d36596be250cbdb560b79380e1f7",
+  "examples/qualify_jump.py": "356e2e590c89bd662db875bca49e77af08d5b461e8b143c8705023268dad22c8",
+  "examples/single_jump.py": "65bce88f0a789ea138088a2cc2d5eb73e33302ef45ec82580df59cdce67e2943",
+  "examples/single_jump_ppo_v1.json": "e923efd2674fb9caa73a285abd106237d5b4600092c64ee9ccba1a18f02257d2",
+  "examples/single_jump_torque.py": "6fa2359205d3e20e9662e8f617ce59fc3dc3dd2aa42ce62a92ed5c218dda9f4d",
+  "examples/single_jump_v1.py": "493269f25c5aed93d6e2fb22a1f5e5dda3a95d5ca49eb372991a1429370f1a8d",
+  "examples/stable_landing_v3.py": "7b0061eac0e12dce500189aeb2889b13315c7541d6f11bf9782ba4a951069fef"
+}
