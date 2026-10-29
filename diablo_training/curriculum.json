@@ -10,14 +10,12 @@
     "roller_obstacle",
     "composite"
   ],
-  "target_whole_height_m": 0.37958,
-  "target_base_height_m": 0.270943,
+  "target_whole_height_m": 0.491,
+  "target_base_height_m": 0.363140765,
   "validation_seeds": [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010],
   "blind_seeds": [3101, 3102, 3103, 3104, 3105, 3106, 3107, 3108, 3109, 3110],
   "limit_seeds": [4101, 4102, 4103],
   "ppo": {
-    "n_steps": 128,
-    "batch_size": 1024,
     "n_epochs": 5,
     "learning_rate": 0.0002,
     "gamma": 0.99,
@@ -25,8 +23,7 @@
     "ent_coef": 0.005,
     "clip_range": 0.2,
     "vf_coef": 0.5,
-    "max_grad_norm": 0.5,
-    "policy_kwargs": {"net_arch": [256, 256]}
+    "max_grad_norm": 0.5
   },
   "reward_defaults": {
     "common_penalties": {
@@ -141,7 +138,7 @@
         "mean_height_tolerance_m": 0.02,
         "max_height_deviation_m": 0.04,
         "max_cross_track_error_m": 0.03,
-        "max_settled_hold_drift_m": 0.05,
+        "max_hold_drift_m": 0.05,
         "max_stop_speed_mps": 0.02,
         "max_wheel_slip_mps": 0.08,
         "max_final_heading_error_deg": 3.0,

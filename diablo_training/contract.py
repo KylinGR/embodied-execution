@@ -13,8 +13,8 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 CURRICULUM_PATH = PACKAGE_DIR / "curriculum.json"
 SPEED_STAGES_PATH = PACKAGE_DIR / "flat_motion_speed_stages.json"
 
-TARGET_BASE_HEIGHT_M = 0.270943
-TARGET_WHOLE_HEIGHT_M = 0.37958
+TARGET_BASE_HEIGHT_M = 0.363140765
+TARGET_WHOLE_HEIGHT_M = 0.491
 PROPRIO_HISTORY_LENGTH = 5
 OBSERVATION_SHAPE = (125,)
 ACTION_SHAPE = (6,)
@@ -131,6 +131,22 @@ def load_course() -> Course:
         blind_seeds=tuple(base["blind_seeds"]),
         limit_seeds=tuple(base["limit_seeds"]),
     )
+
+
+def reward_defaults_for_stage(course: Course, stage_name: str) -> dict[str, Any]:
+    """Resolve common and stage reward defaults in runtime precedence order."""
+    stage = course.stage(stage_name)
+    defaults = dict(course.reward_defaults)
+    defaults.update(stage.get("reward_defaults", {}))
+    if "hold_settle_time_s" in stage:
+        defaults["hold_settle_time_s"] = stage["hold_settle_time_s"]
+    settle_time = float(defaults.get("hold_settle_time_s", 0.0))
+    if not math.isfinite(settle_time) or settle_time < 0.0:
+        raise ValueError(
+            f"{stage_name}: hold_settle_time_s must be finite and nonnegative"
+        )
+    defaults["hold_settle_time_s"] = settle_time
+    return defaults
 
 
 def _validate_stage(name: str, stage: dict[str, Any]) -> None:

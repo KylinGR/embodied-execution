@@ -16,7 +16,7 @@ JOINTS = tuple(
 )
 WHEELS = np.array([2, 5])
 LEGS = np.array([0, 1, 3, 4])
-DEFAULT_Q = np.array([0.5, -1.0, 0.0, 0.5, -1.0, 0.0])
+DEFAULT_Q = np.array([0.99, -2.08, 0.0, 0.99, -2.08, 0.0])
 OBSERVATION_SIGNS = np.array([1.0, 1.0, -1.0, 1.0, 1.0, -1.0])
 PHYSICS_DT = 0.002
 CONTROL_DT = 0.01
@@ -31,8 +31,8 @@ KNEE_DAMPING_GAIN = 1.0
 # Public product page: 22.9 kg including the splice mechanism. The public CAD
 # predates that complete assembly, so preserve its distribution and scale mass.
 OFFICIAL_MASS_KG = 22.9
-TARGET_BASE_HEIGHT_M = 0.270943
-TARGET_WHOLE_HEIGHT_M = 0.37958
+TARGET_WHOLE_HEIGHT_M = 0.491
+TARGET_BASE_HEIGHT_M = 0.363140765
 STANDING_SIZE_M = (0.540, 0.371, TARGET_WHOLE_HEIGHT_M)
 MAX_CONTINUOUS_SPEED_MPS = 2.0
 

@@ -10,7 +10,11 @@ import tomllib
 import unittest
 
 from diablo_training.contract import (
+    ACTION_DTYPE,
+    ACTION_SHAPE,
     BLIND_SEEDS,
+    OBSERVATION_DTYPE,
+    OBSERVATION_SHAPE,
     SCREEN_SEEDS,
     SELECTION_PROBE_SEED,
     SELECTION_VERIFY_SEEDS,
@@ -22,6 +26,7 @@ from diablo_training.contract import (
     load_course,
     metric_name,
     profile_command,
+    reward_defaults_for_stage,
     select_policy_best,
     verify_interface_contract,
     verify_run_contract,
@@ -40,6 +45,7 @@ try:
         OFFICIAL_MASS_KG,
         STALL_TORQUE,
         TARGET_BASE_HEIGHT_M,
+        TARGET_WHOLE_HEIGHT_M,
     )
     from diablo_training.validation import validate_model
 
@@ -107,7 +113,7 @@ class ContractTests(unittest.TestCase):
                 "right_knee_motor",
                 "right_wheel_motor",
             ),
-            "DEFAULT_Q": (0.5, -1.0, 0.0, 0.5, -1.0, 0.0),
+            "DEFAULT_Q": (0.99, -2.08, 0.0, 0.99, -2.08, 0.0),
         }
         exec(
             compile(
@@ -119,10 +125,10 @@ class ContractTests(unittest.TestCase):
         )
         positions = namespace["_initial_joint_positions"]()
         self.assertEqual(len(positions), 10)
-        self.assertEqual(positions["left_return_passive"], -1.0)
-        self.assertEqual(positions["left_branch_passive"], 1.0)
-        self.assertEqual(positions["right_return_passive"], -1.0)
-        self.assertEqual(positions["right_branch_passive"], 1.0)
+        self.assertEqual(positions["left_return_passive"], -2.08)
+        self.assertEqual(positions["left_branch_passive"], 2.08)
+        self.assertEqual(positions["right_return_passive"], -2.08)
+        self.assertEqual(positions["right_branch_passive"], 2.08)
         self.assertIn(
             '"reset_passive_joints": EventTermCfg(\n'
             '            func=_reset_passive_joints,',
@@ -189,6 +195,10 @@ class ContractTests(unittest.TestCase):
         self.assertIn('stage.get("observation_noise", 0.02)', source)
         self.assertIn('schedule="adaptive"', source)
         self.assertIn("hold_settle_time_s", source)
+        self.assertIn(
+            "self.defaults = reward_defaults_for_stage(COURSE, self.stage_name)",
+            source,
+        )
         self.assertIn("termination_tilt_deg", source)
         self.assertIn("drift_cost", source)
         self.assertIn("stop_quality", source)
@@ -219,6 +229,19 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("_raw[:, self._leg_ids]", source)
         self.assertNotIn("_raw[:, self._wheel_ids]", source)
 
+    def test_policy_io_contract_is_float32_125_to_float32_6(self):
+        self.assertEqual(OBSERVATION_DTYPE, "float32")
+        self.assertEqual(OBSERVATION_SHAPE, (125,))
+        self.assertEqual(ACTION_DTYPE, "float32")
+        self.assertEqual(ACTION_SHAPE, (6,))
+
+    def test_ppo_json_only_contains_consumed_parameters(self):
+        root = Path(__file__).resolve().parents[1] / "diablo_training"
+        removed = {"n_steps", "batch_size", "policy_kwargs"}
+        for filename in ("curriculum.json", "flat_motion_speed_stages.json"):
+            source = json.loads((root / filename).read_text(encoding="utf-8"))
+            self.assertFalse(removed & set(source["ppo"]), filename)
+
     def test_course_order_and_seed_sets(self):
         course = load_course()
         self.assertEqual(len(course.order), 18)
@@ -230,6 +253,10 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(balance["reset_heading_range_deg"], [-5.0, 5.0])
         self.assertEqual(balance["observation_noise"], 0.005)
         self.assertEqual(balance["hold_settle_time_s"], 1.0)
+        self.assertEqual(
+            reward_defaults_for_stage(course, "flat_balance")["hold_settle_time_s"],
+            1.0,
+        )
         self.assertEqual(balance["termination_tilt_deg"], 20.0)
         self.assertEqual(balance["overrides"]["fall"], 20.0)
         self.assertEqual(balance["ppo"]["learning_rate"], 0.0001)
@@ -247,7 +274,9 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(balance["reward_defaults"]["heading_tolerance_rad"], 0.05236)
         self.assertEqual(balance["gate"]["max_final_heading_error_deg"], 3.0)
-        self.assertEqual(balance["gate"]["max_settled_hold_drift_m"], 0.05)
+        self.assertEqual(balance["gate"]["max_hold_drift_m"], 0.05)
+        self.assertNotIn("max_settled_hold_drift_m", balance["gate"])
+        self.assertEqual(metric_name("max_hold_drift_m"), "hold_drift_m")
         self.assertEqual(balance["gate"]["max_stop_speed_mps"], 0.02)
         self.assertEqual(balance["gate"]["max_wheel_slip_mps"], 0.08)
         self.assertEqual(
@@ -321,7 +350,8 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(contract["action_shape"], 6)
         self.assertEqual(contract["action_dtype"], "float32")
-        self.assertEqual(contract["target_base_height_m"], 0.270943)
+        self.assertEqual(contract["target_base_height_m"], 0.363140765)
+        self.assertEqual(contract["target_whole_height_m"], 0.491)
         self.assertIs(
             verify_run_contract(
                 {"contract": contract, "stage": "flat_balance"},
@@ -495,9 +525,19 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(names, list(JOINTS))
         self.assertEqual(env.data.ncon, 0, "Initial pose must not penetrate the ground")
         self.assertAlmostEqual(np.linalg.norm(observation[-22:-19]), 1.0, places=5)
-        self.assertAlmostEqual(TARGET_BASE_HEIGHT_M, 0.270943)
+        self.assertAlmostEqual(TARGET_BASE_HEIGHT_M, 0.363140765)
+        self.assertAlmostEqual(TARGET_WHOLE_HEIGHT_M, 0.491)
+        self.assertAlmostEqual(
+            TARGET_WHOLE_HEIGHT_M - TARGET_BASE_HEIGHT_M,
+            0.127859235,
+            places=8,
+        )
         self.assertAlmostEqual(
             env.data.xpos[env.base_id, 2], TARGET_BASE_HEIGHT_M, places=4
+        )
+        np.testing.assert_allclose(
+            DEFAULT_Q,
+            [0.99, -2.08, 0.0, 0.99, -2.08, 0.0],
         )
         self.assertAlmostEqual(float(env.model.body_mass.sum()), OFFICIAL_MASS_KG)
         visual = env.model.geom_group == 1

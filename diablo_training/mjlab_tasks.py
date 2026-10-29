@@ -80,6 +80,7 @@ from .contract import (
     load_run_contract,
     load_course,
     rank_policy_candidates,
+    reward_defaults_for_stage,
     sha256,
 )
 from .model import (
@@ -722,9 +723,7 @@ class XingtianReward:
         self.stage_name = cfg.params["stage_name"]
         self.stage = COURSE.stage(self.stage_name)
         self.weights = self.stage["reward_weights"]
-        defaults = dict(COURSE.reward_defaults)
-        defaults.update(COURSE.stages.get(self.stage_name, {}).get("reward_defaults", {}))
-        self.defaults = defaults
+        self.defaults = reward_defaults_for_stage(COURSE, self.stage_name)
         self.penalties = dict(COURSE.reward_penalties)
         self.penalties.update(self.stage.get("overrides", {}))
         self.robot: Entity = env.scene["robot"]
@@ -1009,8 +1008,6 @@ class XingtianReward:
         )
         straight = torch.abs(cmd[:, 1]) <= straight_yaw_tol
         settle_time = float(self.defaults.get("hold_settle_time_s", 0.0))
-        if settle_time < 0.0:
-            raise ValueError("hold_settle_time_s must be nonnegative")
         settle_steps = round(settle_time / self._env.step_dt)
         settle_required = settle_steps > 0
         self._heading_error_max = torch.maximum(
