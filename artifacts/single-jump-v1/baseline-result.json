@@ -1,0 +1,1919 @@
+{
+  "episodes": [
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.524,
+      "max_drift_m": 0.13814130946641404,
+      "last_5s_drift_m": 0.0013588882784399607,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019398091164568976,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019398091164568976,
+          "peak_com_vz_mps": 0.6342279394778784,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19000,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.39909477973028246,
+        -0.8390962771618599,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.526,
+      "max_drift_m": 0.1383857997742802,
+      "last_5s_drift_m": 0.0013447456929669348,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01946798603436241,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01946798603436241,
+          "peak_com_vz_mps": 0.6346198631950194,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19001,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.40000765806718036,
+        -0.8402983374932451,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.526,
+      "max_drift_m": 0.1383545917698337,
+      "last_5s_drift_m": 0.0013489594373049033,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019473849679249575,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019473849679249575,
+          "peak_com_vz_mps": 0.6345987831236162,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19002,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.3998983258018534,
+        -0.8402465688538179,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.524,
+      "max_drift_m": 0.1381722937451129,
+      "last_5s_drift_m": 0.001364380229441673,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01945208557563491,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01945208557563491,
+          "peak_com_vz_mps": 0.6343665250063473,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19003,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.3992322288692551,
+        -0.8395539819048428,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.528,
+      "max_drift_m": 0.13848342668660713,
+      "last_5s_drift_m": 0.0013270072769061452,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019419684325819545,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019419684325819545,
+          "peak_com_vz_mps": 0.6346273357054745,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19004,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.4003349130441731,
+        -0.8402514939558835,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.52,
+      "max_drift_m": 0.13813884085345193,
+      "last_5s_drift_m": 0.0013833331424304856,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019545732114404385,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7500000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.134,
+          "peak_clearance_m": 0.019545732114404385,
+          "peak_com_vz_mps": 0.6345142939426852,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19005,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.3991590792005229,
+        -0.8401078785918333,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.522000000000002,
+      "max_drift_m": 0.13826259210583527,
+      "last_5s_drift_m": 0.0013709985921312,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019574684924621985,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7500000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.134,
+          "peak_clearance_m": 0.019574684924621985,
+          "peak_com_vz_mps": 0.6347021757495167,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19006,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.39962757177296093,
+        -0.8406845242900239,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.532,
+      "max_drift_m": 0.13851958892067687,
+      "last_5s_drift_m": 0.0012992518551062635,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019259838903514417,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019259838903514417,
+          "peak_com_vz_mps": 0.6343517018973376,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19007,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.4003857321662977,
+        -0.839249921259926,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.528,
+      "max_drift_m": 0.13850433547730392,
+      "last_5s_drift_m": 0.0013279680570002662,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019439393914887568,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019439393914887568,
+          "peak_com_vz_mps": 0.6346876524390693,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19008,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.40042003014327776,
+        -0.8404511126537566,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.528,
+      "max_drift_m": 0.13852415714412003,
+      "last_5s_drift_m": 0.0013333506943345639,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01948639492988559,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01948639492988559,
+          "peak_com_vz_mps": 0.6348000918394671,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19009,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.4005148448283055,
+        -0.8408378982397061,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.524,
+      "max_drift_m": 0.13821078335614415,
+      "last_5s_drift_m": 0.0013638111412585983,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019473082690979818,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019473082690979818,
+          "peak_com_vz_mps": 0.634447541764581,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19010,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.39938099046972575,
+        -0.8398145293339258,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.534,
+      "max_drift_m": 0.13853467967815858,
+      "last_5s_drift_m": 0.0012850844555373966,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019249225507666473,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019249225507666473,
+          "peak_com_vz_mps": 0.6343422526203063,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19011,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.40042012660973814,
+        -0.8392098343225577,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.524,
+      "max_drift_m": 0.13830661945309203,
+      "last_5s_drift_m": 0.0013576218301880904,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01949610156493961,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01949610156493961,
+          "peak_com_vz_mps": 0.6345922108400447,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19012,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.3997369571578656,
+        -0.840259358137014,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.532,
+      "max_drift_m": 0.13855706864487996,
+      "last_5s_drift_m": 0.0013012284702674161,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019298129525264163,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019298129525264163,
+          "peak_com_vz_mps": 0.6344663334756285,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19013,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.4005394593341447,
+        -0.8396227989534292,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.524,
+      "max_drift_m": 0.1382282018874419,
+      "last_5s_drift_m": 0.0013602294330148938,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01946229704439703,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01946229704439703,
+          "peak_com_vz_mps": 0.6344446227238943,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19014,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.3994381863036692,
+        -0.8397909573343224,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.532,
+      "max_drift_m": 0.13864826821761267,
+      "last_5s_drift_m": 0.0013066009348731858,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019393352590890672,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019393352590890672,
+          "peak_com_vz_mps": 0.634747944730728,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19015,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.4009156581728929,
+        -0.8405581422162215,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.526,
+      "max_drift_m": 0.13834736751193508,
+      "last_5s_drift_m": 0.0013482357174448927,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019464849235867235,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019464849235867235,
+          "peak_com_vz_mps": 0.63457369138619,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19016,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.39986785021821364,
+        -0.8401623427321265,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.53,
+      "max_drift_m": 0.1386104224900667,
+      "last_5s_drift_m": 0.0013124581704209882,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01940704873388667,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01940704873388667,
+          "peak_com_vz_mps": 0.6347351916021227,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19017,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.40078607137220884,
+        -0.8405410359833373,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.52,
+      "max_drift_m": 0.13818456147308633,
+      "last_5s_drift_m": 0.0013826376732451785,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019569990957223962,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7500000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.134,
+          "peak_clearance_m": 0.019569990957223962,
+          "peak_com_vz_mps": 0.6346090867115105,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19018,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.39933546005355536,
+        -0.8404125878174923,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.526,
+      "max_drift_m": 0.13836408377423437,
+      "last_5s_drift_m": 0.0013371355390094535,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.0194074163296947,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.0194074163296947,
+          "peak_com_vz_mps": 0.634478946006514,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19019,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.39989929725801815,
+        -0.8398114175840059,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.526,
+      "max_drift_m": 0.13830844936983902,
+      "last_5s_drift_m": 0.0013429059946971568,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01940725200988422,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01940725200988422,
+          "peak_com_vz_mps": 0.6344206737332942,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19020,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.39969912909722866,
+        -0.8396451348124989,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.524,
+      "max_drift_m": 0.13821999046228514,
+      "last_5s_drift_m": 0.001363636634034598,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01947785868247809,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01947785868247809,
+          "peak_com_vz_mps": 0.6344664404651039,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19021,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.3994164571251141,
+        -0.839875142183876,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.524,
+      "max_drift_m": 0.1383199592867382,
+      "last_5s_drift_m": 0.0013548814752047912,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01948792129764755,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01948792129764755,
+          "peak_com_vz_mps": 0.6345901543936623,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19022,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.3997808120619451,
+        -0.8402419085683682,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.526,
+      "max_drift_m": 0.13832664276058154,
+      "last_5s_drift_m": 0.001340204643117276,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019402275657611837,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019402275657611837,
+          "peak_com_vz_mps": 0.6344298966997147,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19023,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.3997620648659001,
+        -0.8396644257932144,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.52,
+      "max_drift_m": 0.1382212690198635,
+      "last_5s_drift_m": 0.0013835599118503462,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019623692282428898,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7500000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.134,
+          "peak_clearance_m": 0.019623692282428898,
+          "peak_com_vz_mps": 0.6347544924681273,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19024,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.3995037155822815,
+        -0.8409038026196662,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.526,
+      "max_drift_m": 0.1382312089964254,
+      "last_5s_drift_m": 0.0013422623460156097,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.01935291452250447,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.01935291452250447,
+          "peak_com_vz_mps": 0.6342330033782435,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19025,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.39939524195121023,
+        -0.8390491107476928,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.526,
+      "max_drift_m": 0.13845730198395312,
+      "last_5s_drift_m": 0.0013485840173296936,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019536209325733384,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7500000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.134,
+          "peak_clearance_m": 0.019536209325733384,
+          "peak_com_vz_mps": 0.6348274542458778,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19026,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.4002991303016362,
+        -0.8409865711166404,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.532,
+      "max_drift_m": 0.1386565998841218,
+      "last_5s_drift_m": 0.0013064088983157495,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019397505316186753,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019397505316186753,
+          "peak_com_vz_mps": 0.6347647693218057,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19027,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.4009477647448174,
+        -0.8406119053604942,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.53,
+      "max_drift_m": 0.1386147025521928,
+      "last_5s_drift_m": 0.0013135878753056612,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019417174134376436,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019417174134376436,
+          "peak_com_vz_mps": 0.6347594525001196,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19028,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.4008065438146308,
+        -0.8406243930862598,
+        0.4,
+        0.2
+      ]
+    },
+    {
+      "passed": true,
+      "failures": [],
+      "duration_s": 19.999999999999794,
+      "sample_count": 10000,
+      "prestand_seconds": 0.998,
+      "terminal_stable_seconds": 17.524,
+      "max_drift_m": 0.13832465346302666,
+      "last_5s_drift_m": 0.0013537496879987723,
+      "postlanding_max_support_gap_s": 0.002,
+      "peak_clearance_m": 0.019484020222850576,
+      "flight_count": 1,
+      "flights": [
+        {
+          "start_s": 1.5980000000000012,
+          "end_s": 1.7480000000000013,
+          "clearance_start_s": 1.6160000000000012,
+          "duration_s": 0.132,
+          "peak_clearance_m": 0.019484020222850576,
+          "peak_com_vz_mps": 0.6345874353585261,
+          "preceded_by_ground_support": true,
+          "single_wheel_transition_s": 0.0,
+          "landing_s": 1.7520000000000013
+        }
+      ],
+      "requirements": {
+        "sampling_hz": 500,
+        "episode_seconds": 20.0,
+        "prestand_seconds": 0.5,
+        "takeoff_window_s": [
+          1.0,
+          3.0
+        ],
+        "minimum_clearance_m": 0.002,
+        "minimum_flight_s": 0.06,
+        "peak_clearance_range_m": [
+          0.015,
+          0.03
+        ],
+        "minimum_com_vz_mps": 0.15,
+        "landing_confirmation_s": 0.05,
+        "maximum_postlanding_support_gap_s": 0.02,
+        "maximum_prelaunch_single_wheel_transition_s": 0.02,
+        "terminal_stable_seconds": 3.0,
+        "maximum_drift_m": 0.2,
+        "last_5s_drift_m": 0.05,
+        "contact_threshold_n": 1.0,
+        "minimum_upright": 0.95,
+        "maximum_horizontal_speed_mps": 0.15,
+        "maximum_gyro_rps": 1.0
+      },
+      "seed": 19029,
+      "fell": false,
+      "truncated": true,
+      "pulse": [
+        0.39979573698412413,
+        -0.8402286357461721,
+        0.4,
+        0.2
+      ]
+    }
+  ],
+  "qualified": true,
+  "contract": {
+    "interface_version": 3,
+    "implementation_sha256": {
+      "model.py": "10d58c721b87afa9eb60aff57342e0a07621c51a26ea9648d239e0c13c2735fe",
+      "control.py": "825c1bd8496a77d62737f1efbd29b19ccb518c4cba76d53e5f1518d6d9394a54",
+      "env.py": "7a40aac0bc471be64c3fa5ae7d5453ff06eb9d622e8a23df9b805b3fa40968f7",
+      "task_module": "493269f25c5aed93d6e2fb22a1f5e5dda3a95d5ca49eb372991a1429370f1a8d",
+      "task_hierarchy": {
+        "single_jump_v1": "493269f25c5aed93d6e2fb22a1f5e5dda3a95d5ca49eb372991a1429370f1a8d",
+        "single_jump_torque": "6fa2359205d3e20e9662e8f617ce59fc3dc3dd2aa42ce62a92ed5c218dda9f4d",
+        "single_jump": "65bce88f0a789ea138088a2cc2d5eb73e33302ef45ec82580df59cdce67e2943",
+        "stable_landing_v3": "7b0061eac0e12dce500189aeb2889b13315c7541d6f11bf9782ba4a951069fef",
+        "diablo_training.env": "7a40aac0bc471be64c3fa5ae7d5453ff06eb9d622e8a23df9b805b3fa40968f7"
+      }
+    },
+    "mujoco_version": "3.8.1",
+    "model": {
+      "source": "resources/robots/diablo/urdf/diablo.urdf",
+      "source_sha256": "cdcaa7720a660bddfe9c2dd238a3c3fe91adccdc3255c5b8491d77344bf62116",
+      "upstream_commit": "590085a027fc9e20b1d7e976714cd195488b96b6",
+      "mechanism_commit": "3c9abbcaeb93911932b9c14777c4e75cc8c1470e",
+      "mechanism_sha256": "91b63e318ace76132bb578c2dfdead9bff3920017647eeac975c67576ba28bc4",
+      "model_scope": "CAD reference with two explicit parallelogram closures; not hardware calibrated",
+      "joints": [
+        "left_hip_motor",
+        "left_knee_motor",
+        "left_wheel_motor",
+        "right_hip_motor",
+        "right_knee_motor",
+        "right_wheel_motor"
+      ],
+      "actuators": 6,
+      "closure_constraints": 2,
+      "default_joint_rad": [
+        0.5,
+        -1.0,
+        0.0,
+        0.5,
+        -1.0,
+        0.0
+      ],
+      "observation_velocity_signs": [
+        1.0,
+        1.0,
+        -1.0,
+        1.0,
+        1.0,
+        -1.0
+      ],
+      "mass_kg": 21.019506,
+      "physics_dt_s": 0.002,
+      "control_dt_s": 0.01,
+      "simulation_only": true,
+      "hardware_authorized": false,
+      "motor_reference": {
+        "source": "arXiv:2407.21500 Table II",
+        "stall_nm": 17.0,
+        "no_load_rad_s": 23.038346126325152,
+        "rated_nm": 9.6
+      },
+      "limits_scope": "Published reference motor, assumed linear torque-speed envelope; not firmware/thermal calibration"
+    },
+    "action_mode": "torque",
+    "observation": {
+      "shape": [
+        148
+      ],
+      "base": "143 sensor LQR observation",
+      "extras": [
+        "normalized episode clock",
+        "four sampled pulse parameters"
+      ],
+      "order": "143 then clock then pulse"
+    },
+    "task_class": "single_jump_v1:SingleJumpV1Env",
+    "sha256": "783ad18c668a8f2ee095d210a726ec1f016d5dd84022b366c73ebc12719ae2d8"
+  },
+  "source_hashes": {
+    "/mnt/d/Codex/PPO_traning/embodied-execution/examples/qualify_jump.py": "356e2e590c89bd662db875bca49e77af08d5b461e8b143c8705023268dad22c8",
+    "/mnt/d/Codex/PPO_traning/embodied-execution/examples/jump_metrics.py": "b654eddd011c9f619a57f83545d0a4c06779d36596be250cbdb560b79380e1f7"
+  },
+  "source_unchanged_during_run": true,
+  "model": "None",
+  "metric_version": "single-jump-v1"
+}

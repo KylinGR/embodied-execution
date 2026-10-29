@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-29",
+  "scope": "Clean exported publication tree, one 20s replay per existing checkpoint; supplementary publication checks, not replacements for original qualification sets.",
+  "old_model": {
+    "passed": true,
+    "seed": 13000,
+    "seconds": 20.0,
+    "contract": "4d1707df4309bf5d0d42dd4457929bc7be2654e7eaa09567773d5939ed223e05"
+  },
+  "new_model": {
+    "passed": true,
+    "seed": 21000,
+    "seconds": 19.999999999999794,
+    "contract": "783ad18c668a8f2ee095d210a726ec1f016d5dd84022b366c73ebc12719ae2d8"
+  },
+  "root_source_byte_correction": {
+    "files": [
+      "diablo_training/env.py",
+      "diablo_training/model.py",
+      "diablo_training/control.py"
+    ],
+    "change": "Restore CRLF bytes required by both saved checkpoint contracts; no semantic code changes.",
+    "previous_git_commit": "58ee0d2036ead2acbe0d2052bb59bab305264fb0"
+  },
+  "source_unchanged_during_replays": true
+}

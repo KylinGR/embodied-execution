@@ -1,0 +1,14 @@
+{
+  "episodes": 30,
+  "passed": 30,
+  "minimum_peak_clearance_m": 0.01912988923096358,
+  "maximum_peak_clearance_m": 0.019599678835319767,
+  "minimum_flight_seconds": 0.132,
+  "maximum_flight_seconds": 0.134,
+  "minimum_terminal_stable_seconds": 17.522000000000002,
+  "maximum_drift_m": 0.13891454409107423,
+  "maximum_last5s_drift_m": 0.001279758866272758,
+  "maximum_postlanding_support_gap_s": 0.002,
+  "minimum_ascent_vz_mps": 0.6342809206992128,
+  "all_20s": true
+}
