@@ -274,6 +274,7 @@ class RewardWeights:
     forward_tracking: float = 1.2
     yaw_tracking: float = 0.8
     upright: float = 0.8
+    tilt: float = 0.15
     height: float = 0.5
     stand_still: float = 0.8
     vertical_velocity: float = 1.0
@@ -319,6 +320,8 @@ class LocomotionReward:
         gyro = np.asarray(transition["gyro"], dtype=float)
         torque = np.asarray(transition["torque"], dtype=float)
         upright = float(np.clip(transition["upright"], -1.0, 1.0))
+        # upright 是 cos(倾角)，所以下面这个就是 sin(倾角)。
+        tilt_sin = float(np.sqrt(max(0.0, 1.0 - upright * upright)))
         height_error = float(transition["height_error"])
         heading_error = float(transition.get("heading_error", 0.0))
         pos_error = float(transition.get("pos_error", 0.0))
@@ -334,6 +337,12 @@ class LocomotionReward:
             ),
             "upright": w.upright * np.exp(
                 -max(0.0, (1.0 - upright) ** 2) / 0.02
+            ),
+            # 站立时直接惩罚倾斜角：sin 在小角度有恒定梯度，(1-cos) 没有。
+            # 只作用于「指令站立」，避免干扰前进/转弯时的正常前倾。
+            "tilt_hold": (
+                -w.tilt * tilt_sin / 0.15
+                if abs(command[0]) < 0.05 and abs(command[1]) <= 0.1 else 0.0
             ),
             "height": -w.height * abs(height_error) / 0.05,
             # 绝对朝向：只要没在下转弯指令就生效——走直线也要求保持朝向。

@@ -87,6 +87,12 @@ def main() -> None:
         ("站着，位置偏 0.50 m", dict(command=cmd_stand, pos_error=0.50)),
         ("停下时已离出发点 2.00 m", dict(command=cmd_stand, pos_error=2.00)),
         ("站着，自转 0.30 rad/s", dict(command=cmd_stand, gyro=np.array([0, 0, 0.30]))),
+        # 转弯分支：cmd_yaw > 0.1 时才走高斯/线性那一支
+        ("转弯指令 0.30，完全不转", dict(command=np.array([0.0, 0.30, 0.25]), gyro=np.zeros(3))),
+        ("转弯指令 0.30，实际 0.28", dict(command=np.array([0.0, 0.30, 0.25]),
+                                    gyro=np.array([0, 0, 0.28]))),
+        ("转弯指令 0.30，转反 0.20", dict(command=np.array([0.0, 0.30, 0.25]),
+                                    gyro=np.array([0, 0, -0.20]))),
         ("前进 0.5 指令，实际 0.34", dict(command=cmd_fwd, velocity=np.array([0.34, 0, 0, 0, 0, 0]))),
         ("前进 0.5 指令，完全不动", dict(command=cmd_fwd)),
         ("巡航，航向偏 1.00 rad", dict(command=cmd_fwd,

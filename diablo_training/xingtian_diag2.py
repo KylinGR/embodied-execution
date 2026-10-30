@@ -641,6 +641,19 @@ def judge(stage: str, m: dict[str, Any]) -> tuple[bool, list[str]]:
         elif val < th:
             reasons.append(f"{label} {fmt.format(val)} < {fmt.format(th)}")
 
+    def hi_abs(key: str, th: float, label: str, fmt: str = "{:.3f}") -> None:
+        """对有符号量取绝对值再比。
+
+        这是一个真实事故的产物：航向偏差有正负，用 hi() 直接比 val > th 时，
+        -34.7° > 8° 恒为 False，于是**所有负向航向偏差永远通过**。
+        这种 bug 只会漏判不会误判，方向是最危险的那种。
+        """
+        val = m.get(key)
+        if val is None or not np.isfinite(val):
+            reasons.append(f"{label} 无数据")
+        elif abs(val) > th:
+            reasons.append(f"{label} {fmt.format(abs(val))} > {fmt.format(th)}")
+
     th = THRESHOLDS.get(stage, {})
 
     if stage in ("stand", "stand_long"):
@@ -655,7 +668,7 @@ def judge(stage: str, m: dict[str, Any]) -> tuple[bool, list[str]]:
         if stage != "accel":
             lo("distance_ratio", th["distance_ratio"], "位移比", "{:.0%}")
             hi("lateral_drift_m", th["lateral_drift_m"], "横向漂移", "{:.2f} m")
-            hi("heading_change_deg", th["heading_deg"], "航向偏", "{:.1f}°")
+            hi_abs("heading_change_deg", th["heading_deg"], "航向偏", "{:.1f}°")
         if stage == "forward":
             rt = m.get("rise_time_s")
             if rt is None or not np.isfinite(rt):

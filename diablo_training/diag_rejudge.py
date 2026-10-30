@@ -18,7 +18,10 @@ import argparse
 import json
 from pathlib import Path
 
-import xingtian_diag2 as D
+try:                       # python -m diablo_training.diag_rejudge
+    from . import xingtian_diag2 as D
+except ImportError:        # 直接跑脚本时
+    import xingtian_diag2 as D  # type: ignore[no-redef]
 
 # ---------------------------------------------------------------- 放宽后的阈值
 # 每条都写了依据；标注（不变）的是经过物理推导后决定保留的。
