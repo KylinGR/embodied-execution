@@ -1,4 +1,4 @@
-"""CAD-based DIABLO mechanism shared by native MuJoCo and MJLab."""
+"""CAD-based DIABLO with serial motor drives and parallelogram closures."""
 
 from copy import deepcopy
 import hashlib
@@ -16,66 +16,31 @@ JOINTS = tuple(
 )
 WHEELS = np.array([2, 5])
 LEGS = np.array([0, 1, 3, 4])
-DEFAULT_Q = np.array([0.99, -2.08, 0.0, 0.99, -2.08, 0.0])
+DEFAULT_Q = np.array(
+    [0.969324, -1.938616, 0.0, 0.969324, -1.938616, 0.0]
+)
 OBSERVATION_SIGNS = np.array([1.0, 1.0, -1.0, 1.0, 1.0, -1.0])
 PHYSICS_DT = 0.002
 CONTROL_DT = 0.01
 STALL_TORQUE = 17.0
 RATED_TORQUE = 9.6
 NO_LOAD_SPEED = 220 * 2 * np.pi / 60
-HIP_POSITION_GAIN = 60.0
-KNEE_POSITION_GAIN = 72.0
-HIP_DAMPING_GAIN = 1.0
-KNEE_DAMPING_GAIN = 1.0
+HIP_POSITION_GAIN = 15.0
+KNEE_POSITION_GAIN = 18.0
+HIP_DAMPING_GAIN = 0.3
+KNEE_DAMPING_GAIN = 0.2
 
-# Public product page: 22.9 kg including the splice mechanism. The public CAD
-# predates that complete assembly, so preserve its distribution and scale mass.
-OFFICIAL_MASS_KG = 22.9
+# Values documented by the original repository's main branch. The CAD model is
+# kept at its published mass instead of being rescaled to the product-page mass.
+DOCUMENTED_MODEL_MASS_KG = 21.019506
+# Default stance is the healthy operating posture: wheel contact gives a
+# 0.477859 m whole-body height with the wheel axle under the system centre.
+TARGET_BASE_HEIGHT_M = 0.350
+TARGET_STANDING_HEIGHT_M = 0.477859
+RESET_CLEARANCE_M = 0.005
+RESET_BASE_HEIGHT_M = TARGET_BASE_HEIGHT_M + RESET_CLEARANCE_M
+# Product-page envelope; this is not the trained operating height.
 TARGET_WHOLE_HEIGHT_M = 0.491
-TARGET_BASE_HEIGHT_M = 0.363140765
-STANDING_SIZE_M = (0.540, 0.371, TARGET_WHOLE_HEIGHT_M)
-MAX_CONTINUOUS_SPEED_MPS = 2.0
-
-_PUBLISHED_INERTIAL_ORIGINS = {
-    "diablo_base_link": (-0.001, 0.0, 0.009267),
-    "left_fake_thigh_link": (0.001204, 0.0, -0.066749),
-    "left_thigh_link": (0.056675, -0.014633, -0.008),
-    "left_shank_link": (0.092381, 0.000001, 0.012349),
-    "right_fake_thigh_link": (0.001204, 0.0, 0.066749),
-    "right_thigh_link": (0.056675, -0.014633, 0.008),
-    "right_shank_link": (0.092381, 0.000001, -0.012349),
-}
-
-
-def _scale_mass_properties(robot: ET.Element) -> float:
-    masses = [float(node.get("value")) for node in robot.findall(".//inertial/mass")]
-    source_mass = sum(masses)
-    if source_mass <= 0:
-        raise ValueError("Robot source contains invalid mass")
-    # ponytail: only total mass is published; uniform scaling preserves the CAD
-    # distribution. Replace with measured per-link data when hardware calibration
-    # is available.
-    scale = OFFICIAL_MASS_KG / source_mass
-    for node in robot.findall(".//inertial/mass"):
-        node.set("value", str(float(node.get("value")) * scale))
-    for inertia in robot.findall(".//inertial/inertia"):
-        for name in ("ixx", "ixy", "ixz", "iyy", "iyz", "izz"):
-            inertia.set(name, str(float(inertia.get(name)) * scale))
-    return scale
-
-
-def _apply_published_inertial_origins(robot: ET.Element) -> None:
-    for link_name, xyz in _PUBLISHED_INERTIAL_ORIGINS.items():
-        link = robot.find(f"link[@name='{link_name}']")
-        if link is None:
-            raise ValueError(f"Missing expected link {link_name}")
-        inertial = link.find("inertial")
-        if inertial is None:
-            raise ValueError(f"Missing expected inertia for {link_name}")
-        origin = inertial.find("origin")
-        if origin is None:
-            origin = ET.SubElement(inertial, "origin", rpy="0 0 0")
-        origin.set("xyz", " ".join(str(value) for value in xyz))
 
 
 def _robot_tree() -> ET.Element:
@@ -130,8 +95,6 @@ def _robot_tree() -> ET.Element:
 
     for mesh in robot.findall(".//mesh"):
         mesh.set("filename", str((source.parent / mesh.get("filename")).resolve()))
-    _scale_mass_properties(robot)
-    _apply_published_inertial_origins(robot)
     extension = ET.SubElement(robot, "mujoco")
     ET.SubElement(extension, "compiler", fusestatic="false", discardvisual="false")
     return robot
@@ -149,7 +112,7 @@ def make_robot_spec(
     )
     base = spec.body("diablo_base_link")
     base.add_freejoint(name="floating_base")
-    base.pos = [0, 0, TARGET_BASE_HEIGHT_M]
+    base.pos = [0, 0, RESET_BASE_HEIGHT_M]
     if configure_options:
         spec.option.timestep = PHYSICS_DT
         spec.option.gravity = [0, 0, -9.81]
@@ -267,11 +230,7 @@ def metadata(model):
         "upstream_commit": lock["commit"],
         "mechanism_commit": lock["mechanism"]["commit"],
         "mechanism_sha256": hashlib.sha256(mechanism_path().read_bytes()).hexdigest(),
-        "model_scope": (
-            "CAD reference with explicit parallelogram closures; total mass "
-            "uniformly normalized to the public 22.9 kg product specification; "
-            "link centers of mass restored from the locked Webots mechanism"
-        ),
+        "model_scope": "CAD reference with two explicit parallelogram closures; not hardware calibrated",
         "auxiliary_caster_wheels": "excluded",
         "joints": list(JOINTS),
         "actuators": model.nu,
@@ -280,9 +239,10 @@ def metadata(model):
         "observation_velocity_signs": OBSERVATION_SIGNS.tolist(),
         "mass_kg": float(model.body_mass.sum()),
         "target_base_height_m": TARGET_BASE_HEIGHT_M,
+        "target_standing_height_m": TARGET_STANDING_HEIGHT_M,
+        "reset_clearance_m": RESET_CLEARANCE_M,
+        "reset_base_height_m": RESET_BASE_HEIGHT_M,
         "target_whole_height_m": TARGET_WHOLE_HEIGHT_M,
-        "standing_size_m": list(STANDING_SIZE_M),
-        "max_continuous_speed_mps": MAX_CONTINUOUS_SPEED_MPS,
         "physics_dt_s": PHYSICS_DT,
         "control_dt_s": CONTROL_DT,
         "simulation_only": True,

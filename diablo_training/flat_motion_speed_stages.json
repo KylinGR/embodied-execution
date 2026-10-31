@@ -1,7 +1,9 @@
 {
   "version": 1,
   "order": [
+    "flat_motion_010",
     "flat_motion_020",
+    "flat_motion_030",
     "flat_motion_040",
     "flat_motion_060",
     "flat_motion_080",
@@ -13,7 +15,8 @@
     "flat_motion_200"
   ],
   "target_whole_height_m": 0.491,
-  "target_base_height_m": 0.363140765,
+  "target_standing_height_m": 0.477859,
+  "target_base_height_m": 0.350,
   "validation_seeds": [
     2001,
     2002,
@@ -63,7 +66,7 @@
       "zero_speed": 0.3,
       "wheel_alignment": 1.0,
       "wheel_sync": 0.5,
-      "fall": 20.0
+      "fall": 40.0
     },
     "speed_tolerance_base_mps": 0.03,
     "speed_tolerance_slope": 0.05,
@@ -71,7 +74,6 @@
     "yaw_tolerance_slope": 0.2,
     "yaw_zero_guard": 0.5,
     "height_tolerance_m": 0.025,
-    "pitch_weight": 0.2,
     "pitch_tolerance_rad": 0.0873,
     "steady_pitch_acceleration_mps2": 0.01,
     "pitch_gate": {
@@ -96,6 +98,158 @@
     "actuator_scale_max": 1.1
   },
   "stages": {
+    "flat_motion_010": {
+      "budget": 6000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 0.1,
+        "backward": 0.1,
+        "yaw": 1.0
+      },
+      "reset_heading_range_deg": [-5.0, 5.0],
+      "observation_noise": 0.005,
+      "termination_tilt_deg": 12.0,
+      "hold_settle_time_s": 0.5,
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [6.0, 0.1, 0.0],
+            [14.0, 0.1, 0.0],
+            [18.0, 0.0, 0.0],
+            [20.0, 0.0, 0.0]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [6.0, -0.1, 0.0],
+            [14.0, -0.1, 0.0],
+            [18.0, 0.0, 0.0],
+            [20.0, 0.0, 0.0]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [6.0, 0.1, 0.0],
+            [8.0, 0.1, 0.0],
+            [12.0, 0.0, 0.0],
+            [14.0, 0.0, 0.0],
+            [18.0, -0.1, 0.0],
+            [20.0, -0.1, 0.0],
+            [24.0, 0.0, 0.0],
+            [26.0, 0.0, 0.0]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 2.0,
+        "underspeed": 0.6,
+        "yaw": 1.2,
+        "straight_heading": 1.2,
+        "cross_track": 1.2,
+        "wheel_slip_gate": 0.75,
+        "stop_speed_gate": 0.5,
+        "wheel_sync_gate": 1.5,
+        "wheel_chatter": 0.75,
+        "height": 1.8,
+        "upright": 2.0,
+        "pitch": 2.0,
+        "stationary": 1.0,
+        "drift": 1.5,
+        "zero_speed": 1.5,
+        "acceleration": 0.6,
+        "wheel_slip": 0.3,
+        "in_place": 0.0,
+        "vertical_velocity": 0.1,
+        "angular_xy": 0.25,
+        "braking": 0.2,
+        "backslide": 0.4,
+        "over_rated": 0.1,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.02,
+        "max_speed_mae_fraction_of_peak": 0.2,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_backslide_mps": 0.05,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.93,
+        "max_mean_abs_pitch_deg": 3.0,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 3.0,
+        "max_mean_abs_roll_deg": 3.0,
+        "max_roll_deg": 5.0,
+        "max_final_heading_error_deg": 2.0,
+        "max_heading_drift_after_0.5s_deg": 2.0,
+        "max_cross_track_error_m": 0.03,
+        "max_settled_mean_height_error_m": 0.015,
+        "max_settled_height_deviation_m": 0.03,
+        "max_mean_steady_wheel_slip_mps": 0.02,
+        "max_transient_wheel_slip_mps": 0.05,
+        "max_stop_speed_mps": 0.015,
+        "max_final_speed_mps": 0.02,
+        "max_stop_speed_fraction_of_peak": 0.3,
+        "max_hold_drift_after_0.5s_m": 0.02,
+        "max_wheel_center_offset_m": 0.015,
+        "max_settled_straight_wheel_speed_difference_mps": 0.04
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.05,
+        "speed_tolerance_slope": 0.0,
+        "yaw_tolerance_base_rad_s": 0.01,
+        "straight_heading_tolerance_rad": 0.05236,
+        "gate_penalty_ema_decay": 0.98,
+        "height_tolerance_m": 0.015,
+        "pitch_tolerance_rad": 0.05236,
+        "wheel_slip_tolerance_mps": 0.02,
+        "acceleration_tolerance_mps2": 0.08,
+        "zero_speed_tolerance_mps": 0.005,
+        "drift_tolerance_m": 0.015,
+        "wheel_sync_tolerance_mps": 0.04
+      },
+      "overrides": {
+        "action_rate": 0.04,
+        "wheel_alignment": 1.5,
+        "fall": 40.0
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "ent_coef": 0.002,
+        "clip_range": 0.2,
+        "vf_coef": 0.5,
+        "max_grad_norm": 0.5,
+        "target_kl": 0.02
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 2.0,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 4.0
+      }
+    },
     "flat_motion_020": {
       "budget": 8000000,
       "terrain": {
@@ -108,6 +262,8 @@
         "backward": 0.2,
         "yaw": 1.0
       },
+      "termination_tilt_deg": 12.0,
+      "hold_settle_time_s": 0.5,
       "profiles": [
         {
           "name": "forward",
@@ -239,30 +395,35 @@
         }
       ],
       "reward_weights": {
-        "speed": 3.0,
-        "underspeed": 0.5,
-        "yaw": 0.6,
-        "straight_heading": 1.0,
-        "cross_track": 1.0,
+        "underspeed": 1.0,
+        "underspeed_cost": 0.4,
+        "speed": 2.5,
+        "yaw": 1.2,
+        "straight_heading": 1.2,
+        "cross_track": 1.2,
         "wheel_slip_gate": 1.0,
         "stop_speed_gate": 0.5,
         "wheel_sync_gate": 1.5,
-        "wheel_chatter": 1.0,
-        "height": 1.4,
-        "upright": 0.6,
-        "pitch": 0.4,
-        "stationary": 0.75,
-        "drift": 1.0,
+        "wheel_chatter": 0.75,
+        "height": 1.8,
+        "upright": 2.0,
+        "pitch": 2.0,
+        "stationary": 1.0,
+        "drift": 1.5,
         "zero_speed": 1.5,
         "acceleration": 0.6,
-        "wheel_slip": 0.2,
+        "wheel_slip": 0.3,
         "in_place": 0.0,
-        "vertical_velocity": 0.05,
-        "angular_xy": 0.1,
+        "vertical_velocity": 0.1,
+        "angular_xy": 0.25,
         "braking": 0.2,
-        "backslide": 0.25,
+        "backslide": 0.4,
         "over_rated": 0.1,
-        "power": 0.0
+        "power": 0.0,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0
       },
       "gate": {
         "min_pass_rate": 0.9,
@@ -270,57 +431,229 @@
         "max_speed_mae_mps": 0.16,
         "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.08,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 4.0,
-        "max_pitch_deg": 8.0,
-        "max_mean_abs_steady_pitch_deg": 4.0,
+        "max_backslide_mps": 0.08,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.93,
+        "max_mean_abs_pitch_deg": 3.0,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 3.0,
         "max_mean_abs_roll_deg": 3.0,
         "max_roll_deg": 5.0,
         "max_final_heading_error_deg": 4.0,
         "max_cross_track_error_m": 0.05,
-        "mean_height_tolerance_m": 0.015,
-        "max_height_deviation_m": 0.03,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_settled_mean_height_error_m": 0.015,
+        "max_settled_height_deviation_m": 0.03,
+        "max_mean_steady_wheel_slip_mps": 0.025,
+        "max_transient_wheel_slip_mps": 0.08,
         "max_stop_speed_mps": 0.012,
         "max_stop_speed_fraction_of_peak": 0.25,
-        "max_hold_drift_m": 0.01,
+        "max_final_speed_mps": 0.03,
+        "max_hold_drift_after_0.5s_m": 0.02,
         "max_wheel_center_offset_m": 0.015,
-        "max_straight_wheel_speed_difference_mps": 0.03
+        "max_settled_straight_wheel_speed_difference_mps": 0.03
       },
       "reward_defaults": {
         "speed_tolerance_base_mps": 0.03,
         "speed_tolerance_slope": 0.00,
-        "yaw_tolerance_base_rad_s": 0.05,
+        "yaw_tolerance_base_rad_s": 0.01,
         "straight_heading_tolerance_rad": 0.05236,
         "gate_penalty_ema_decay": 0.98,
         "height_tolerance_m": 0.015,
-        "pitch_weight": 0.4,
-        "pitch_tolerance_rad": 0.06981317,
-        "wheel_slip_tolerance_mps": 0.05,
-        "acceleration_tolerance_mps2": 0.1,
+        "pitch_tolerance_rad": 0.05236,
+        "wheel_slip_tolerance_mps": 0.025,
+        "acceleration_tolerance_mps2": 0.12,
         "zero_speed_tolerance_mps": 0.003,
-        "drift_tolerance_m": 0.01,
-        "wheel_sync_tolerance_mps": 0.03
+        "drift_tolerance_m": 0.015,
+        "wheel_sync_tolerance_mps": 0.04
       },
       "overrides": {
-        "action_rate": 0.03
+        "action_rate": 0.035,
+        "wheel_alignment": 1.5,
+        "fall": 40.0
       },
       "ppo": {
         "learning_rate": 0.0001,
         "n_epochs": 3,
-        "target_kl": 0.02,
-        "ent_coef": 0.0015
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "ent_coef": 0.003,
+        "clip_range": 0.2,
+        "vf_coef": 0.5,
+        "max_grad_norm": 0.5,
+        "target_kl": 0.02
       },
       "control": {
         "wheel_speed_loop": "pi",
-        "wheel_speed_target_max_rad_s": 12.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "wheel_speed_target_max_rad_s": 4.0,
         "wheel_speed_kp": 0.3,
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 8.0,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5
+      }
+    },
+    "flat_motion_030": {
+      "budget": 6000000,
+      "terrain": {
+        "kind": "flat",
+        "length_m": 40.0,
+        "width_m": 4.0
+      },
+      "limits": {
+        "forward": 0.3,
+        "backward": 0.3,
+        "yaw": 1.0
+      },
+      "termination_tilt_deg": 12.0,
+      "hold_settle_time_s": 0.5,
+      "profiles": [
+        {
+          "name": "forward",
+          "start": "start",
+          "points": [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [6.0, 0.3, 0.0],
+            [14.0, 0.3, 0.0],
+            [18.0, 0.0, 0.0],
+            [20.0, 0.0, 0.0]
+          ]
+        },
+        {
+          "name": "backward",
+          "start": "end",
+          "points": [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [6.0, -0.3, 0.0],
+            [14.0, -0.3, 0.0],
+            [18.0, 0.0, 0.0],
+            [20.0, 0.0, 0.0]
+          ]
+        },
+        {
+          "name": "accel_decel",
+          "start": "start",
+          "points": [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [6.0, 0.3, 0.0],
+            [8.0, 0.3, 0.0],
+            [12.0, 0.0, 0.0],
+            [14.0, 0.0, 0.0],
+            [18.0, -0.3, 0.0],
+            [20.0, -0.3, 0.0],
+            [24.0, 0.0, 0.0],
+            [26.0, 0.0, 0.0]
+          ]
+        }
+      ],
+      "reward_weights": {
+        "speed": 2.8,
+        "underspeed": 1.0,
+        "underspeed_cost": 0.4,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "startup_wheel_action": 4.0,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0,
+        "roll": 1.5,
+        "yaw": 1.2,
+        "straight_heading": 1.2,
+        "cross_track": 1.2,
+        "wheel_slip_gate": 1.0,
+        "stop_speed_gate": 1.5,
+        "wheel_sync_gate": 1.8,
+        "wheel_chatter": 0.75,
+        "height": 1.8,
+        "upright": 2.2,
+        "pitch": 2.4,
+        "stationary": 1.0,
+        "drift": 1.5,
+        "zero_speed": 2.0,
+        "acceleration": 0.7,
+        "wheel_slip": 0.35,
+        "in_place": 0.0,
+        "vertical_velocity": 0.15,
+        "angular_xy": 0.6,
+        "braking": 0.3,
+        "backslide": 0.5,
+        "over_rated": 0.1,
+        "power": 0.0
+      },
+      "gate": {
+        "min_pass_rate": 0.9,
+        "min_duration_fraction": 0.98,
+        "max_speed_mae_mps": 0.12,
+        "max_speed_mae_fraction_of_peak": 0.15,
+        "min_planned_peak_progress_fraction": 0.75,
+        "max_backslide_mps": 0.06,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.93,
+        "max_mean_abs_pitch_deg": 3.0,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 3.0,
+        "max_mean_abs_roll_deg": 3.0,
+        "max_roll_deg": 5.0,
+        "max_final_heading_error_deg": 3.0,
+        "max_heading_drift_after_0.5s_deg": 1.5,
+        "max_cross_track_error_m": 0.04,
+        "max_settled_mean_height_error_m": 0.015,
+        "max_settled_height_deviation_m": 0.03,
+        "max_mean_steady_wheel_slip_mps": 0.03,
+        "max_transient_wheel_slip_mps": 0.1,
+        "max_stop_speed_mps": 0.012,
+        "max_stop_speed_fraction_of_peak": 0.25,
+        "max_final_speed_mps": 0.025,
+        "max_hold_drift_after_0.5s_m": 0.02,
+        "max_wheel_center_offset_m": 0.015,
+        "max_settled_straight_wheel_speed_difference_mps": 0.04
+      },
+      "reward_defaults": {
+        "speed_tolerance_base_mps": 0.035,
+        "speed_tolerance_slope": 0.0,
+        "yaw_tolerance_base_rad_s": 0.01,
+        "straight_heading_tolerance_rad": 0.05236,
+        "gate_penalty_ema_decay": 0.98,
+        "height_tolerance_m": 0.015,
+        "pitch_tolerance_rad": 0.05236,
+        "wheel_slip_tolerance_mps": 0.03,
+        "acceleration_tolerance_mps2": 0.1,
+        "zero_speed_tolerance_mps": 0.003,
+        "startup_window_s": 0.2,
+        "drift_tolerance_m": 0.015,
+        "wheel_sync_tolerance_mps": 0.04
+      },
+      "overrides": {
+        "action_rate": 0.04,
+        "wheel_alignment": 1.7,
+        "fall": 40.0
+      },
+      "ppo": {
+        "learning_rate": 0.0001,
+        "n_epochs": 3,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "ent_coef": 0.003,
+        "clip_range": 0.2,
+        "vf_coef": 0.5,
+        "max_grad_norm": 0.5,
+        "target_kl": 0.02
+      },
+      "control": {
+        "wheel_speed_loop": "pi",
+        "wheel_speed_target_max_rad_s": 6.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5,
+        "wheel_speed_kp": 0.3,
+        "wheel_speed_ki": 4.0,
+        "wheel_integral_limit_nm": 2.0,
+        "wheel_feedforward_nm_per_rad_s": 0.05,
+        "wheel_target_slew_rad_s2": 10.0
       }
     },
     "flat_motion_040": {
@@ -335,6 +668,8 @@
         "backward": 0.4,
         "yaw": 1.0
       },
+      "termination_tilt_deg": 12.0,
+      "hold_settle_time_s": 0.5,
       "profiles": [
         {
           "name": "forward",
@@ -467,27 +802,34 @@
       ],
       "reward_weights": {
         "speed": 3.0,
-        "underspeed": 0.5,
-        "yaw": 0.6,
-        "straight_heading": 1.0,
-        "cross_track": 1.0,
+        "underspeed": 1.0,
+        "underspeed_cost": 0.4,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "startup_wheel_action": 4.0,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0,
+        "roll": 1.5,
+        "yaw": 1.2,
+        "straight_heading": 1.2,
+        "cross_track": 1.2,
         "wheel_slip_gate": 1.0,
-        "stop_speed_gate": 0.5,
-        "wheel_sync_gate": 1.5,
-        "wheel_chatter": 1.0,
-        "height": 1.4,
-        "upright": 0.6,
-        "pitch": 0.4,
-        "stationary": 0.75,
-        "drift": 1.0,
-        "zero_speed": 1.5,
+        "stop_speed_gate": 2.0,
+        "wheel_sync_gate": 1.8,
+        "wheel_chatter": 0.75,
+        "height": 1.8,
+        "upright": 2.0,
+        "pitch": 2.0,
+        "stationary": 1.0,
+        "drift": 1.5,
+        "zero_speed": 2.2,
         "acceleration": 0.6,
-        "wheel_slip": 0.2,
+        "wheel_slip": 0.3,
         "in_place": 0.0,
-        "vertical_velocity": 0.05,
-        "angular_xy": 0.1,
-        "braking": 0.15,
-        "backslide": 0.2,
+        "vertical_velocity": 0.1,
+        "angular_xy": 0.6,
+        "braking": 0.3,
+        "backslide": 0.5,
         "over_rated": 0.1,
         "power": 0.0
       },
@@ -495,53 +837,72 @@
         "min_pass_rate": 0.9,
         "min_duration_fraction": 0.98,
         "max_speed_mae_mps": 0.16,
-        "max_speed_mae_fraction_of_peak": 0.2,
+        "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.09,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 4.0,
-        "max_pitch_deg": 8.0,
-        "max_mean_abs_steady_pitch_deg": 4.0,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
-        "max_stop_speed_mps": 0.009,
+        "max_backslide_mps": 0.08,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.93,
+        "max_mean_abs_pitch_deg": 3.0,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 3.0,
+        "max_mean_abs_roll_deg": 3.0,
+        "max_roll_deg": 5.0,
+        "max_final_heading_error_deg": 4.0,
+        "max_heading_drift_after_0.5s_deg": 2.0,
+        "max_cross_track_error_m": 0.05,
+        "max_settled_mean_height_error_m": 0.015,
+        "max_settled_height_deviation_m": 0.03,
+        "max_mean_steady_wheel_slip_mps": 0.04,
+        "max_transient_wheel_slip_mps": 0.12,
+        "max_stop_speed_mps": 0.012,
         "max_stop_speed_fraction_of_peak": 0.25,
-        "max_hold_drift_m": 0.011,
-        "max_wheel_center_offset_m": 0.04,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_final_speed_mps": 0.03,
+        "max_hold_drift_after_0.5s_m": 0.02,
+        "max_wheel_center_offset_m": 0.015,
+        "max_settled_straight_wheel_speed_difference_mps": 0.04
       },
       "reward_defaults": {
-        "speed_tolerance_base_mps": 0.03,
-        "speed_tolerance_slope": 0.05,
-        "yaw_tolerance_base_rad_s": 0.05,
+        "speed_tolerance_base_mps": 0.04,
+        "speed_tolerance_slope": 0.0,
+        "yaw_tolerance_base_rad_s": 0.01,
         "straight_heading_tolerance_rad": 0.05236,
         "gate_penalty_ema_decay": 0.98,
-        "pitch_weight": 0.4,
-        "pitch_tolerance_rad": 0.06981317,
-        "wheel_slip_tolerance_mps": 0.1,
+        "height_tolerance_m": 0.015,
+        "pitch_tolerance_rad": 0.05236,
+        "wheel_slip_tolerance_mps": 0.04,
         "acceleration_tolerance_mps2": 0.15,
         "zero_speed_tolerance_mps": 0.003,
-        "drift_tolerance_m": 0.011
+        "startup_window_s": 0.2,
+        "drift_tolerance_m": 0.015,
+        "wheel_sync_tolerance_mps": 0.03
       },
       "overrides": {
-        "action_rate": 0.03
+        "action_rate": 0.035,
+        "wheel_alignment": 1.5,
+        "fall": 40.0
       },
       "ppo": {
         "learning_rate": 0.0001,
         "n_epochs": 3,
-        "target_kl": 0.02,
-        "ent_coef": 0.0015
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "ent_coef": 0.003,
+        "clip_range": 0.2,
+        "vf_coef": 0.5,
+        "max_grad_norm": 0.5,
+        "target_kl": 0.02
       },
       "control": {
         "wheel_speed_loop": "pi",
-        "wheel_speed_target_max_rad_s": 12.0,
+        "wheel_speed_target_max_rad_s": 8.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "zero_wheel_after_hold_s": 0.5,
         "wheel_speed_kp": 0.3,
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 12.0,
+        "standing_wheel_target_cap_rad_s": 0.2
       }
     },
     "flat_motion_060": {
@@ -688,7 +1049,7 @@
       ],
       "reward_weights": {
         "speed": 3.1,
-        "underspeed": 0.6,
+        "underspeed": 1.0,
         "yaw": 0.6,
         "straight_heading": 1.0,
         "cross_track": 1.0,
@@ -710,7 +1071,12 @@
         "braking": 0.25,
         "backslide": 0.25,
         "over_rated": 0.1,
-        "power": 0.0
+        "power": 0.0,
+        "underspeed_cost": 0.4,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0
       },
       "gate": {
         "min_pass_rate": 0.9,
@@ -718,30 +1084,29 @@
         "max_speed_mae_mps": 0.16,
         "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.1,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 4.25,
-        "max_pitch_deg": 8.5,
-        "max_mean_abs_steady_pitch_deg": 4.25,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.91,
+        "max_mean_abs_pitch_deg": 3.25,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 3.25,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
+        "max_mean_steady_wheel_slip_mps": 0.05,
+        "max_transient_wheel_slip_mps": 0.12,
         "max_stop_speed_mps": 0.01,
         "max_stop_speed_fraction_of_peak": 0.25,
         "max_hold_drift_m": 0.012,
         "max_wheel_center_offset_m": 0.04,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       },
       "reward_defaults": {
         "speed_tolerance_base_mps": 0.03,
         "speed_tolerance_slope": 0.05,
-        "yaw_tolerance_base_rad_s": 0.05,
+        "yaw_tolerance_base_rad_s": 0.01,
         "straight_heading_tolerance_rad": 0.05236,
         "gate_penalty_ema_decay": 0.98,
-        "pitch_weight": 0.38,
-        "pitch_tolerance_rad": 0.074176493,
-        "wheel_slip_tolerance_mps": 0.12,
+        "pitch_tolerance_rad": 0.0567232,
+        "wheel_slip_tolerance_mps": 0.05,
         "acceleration_tolerance_mps2": 0.1,
         "zero_speed_tolerance_mps": 0.003,
         "drift_tolerance_m": 0.012
@@ -762,7 +1127,10 @@
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 20.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5
       }
     },
     "flat_motion_080": {
@@ -909,7 +1277,7 @@
       ],
       "reward_weights": {
         "speed": 3.2,
-        "underspeed": 0.7,
+        "underspeed": 1.0,
         "yaw": 0.6,
         "straight_heading": 1.0,
         "cross_track": 1.0,
@@ -931,7 +1299,12 @@
         "braking": 0.3,
         "backslide": 0.25,
         "over_rated": 0.1,
-        "power": 0.0
+        "power": 0.0,
+        "underspeed_cost": 0.4,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0
       },
       "gate": {
         "min_pass_rate": 0.9,
@@ -939,30 +1312,29 @@
         "max_speed_mae_mps": 0.16,
         "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.11,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 4.5,
-        "max_pitch_deg": 9.0,
-        "max_mean_abs_steady_pitch_deg": 4.5,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.91,
+        "max_mean_abs_pitch_deg": 3.25,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 3.25,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
+        "max_mean_steady_wheel_slip_mps": 0.05,
+        "max_transient_wheel_slip_mps": 0.12,
         "max_stop_speed_mps": 0.011,
         "max_stop_speed_fraction_of_peak": 0.25,
         "max_hold_drift_m": 0.013,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       },
       "reward_defaults": {
         "speed_tolerance_base_mps": 0.03,
         "speed_tolerance_slope": 0.05,
-        "yaw_tolerance_base_rad_s": 0.05,
+        "yaw_tolerance_base_rad_s": 0.01,
         "straight_heading_tolerance_rad": 0.05236,
         "gate_penalty_ema_decay": 0.98,
-        "pitch_weight": 0.36,
-        "pitch_tolerance_rad": 0.078539816,
-        "wheel_slip_tolerance_mps": 0.12,
+        "pitch_tolerance_rad": 0.0567232,
+        "wheel_slip_tolerance_mps": 0.05,
         "acceleration_tolerance_mps2": 0.15,
         "zero_speed_tolerance_mps": 0.003,
         "drift_tolerance_m": 0.013
@@ -983,7 +1355,10 @@
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 20.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5
       }
     },
     "flat_motion_100": {
@@ -998,6 +1373,7 @@
         "backward": 1.0,
         "yaw": 1.0
       },
+      "termination_tilt_deg": 20.0,
       "control": {
         "wheel_speed_loop": "pi",
         "wheel_speed_target_max_rad_s": 14.0,
@@ -1005,7 +1381,10 @@
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 20.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5
       },
       "profiles": [
         {
@@ -1138,8 +1517,9 @@
         }
       ],
       "reward_weights": {
-        "speed": 3.4,
-        "underspeed": 0.8,
+        "speed": 2.8,
+        "underspeed": 1.0,
+        "underspeed_cost": 0.4,
         "yaw": 0.6,
         "straight_heading": 1.0,
         "cross_track": 1.0,
@@ -1148,8 +1528,8 @@
         "wheel_sync_gate": 1.5,
         "wheel_chatter": 1.0,
         "height": 1.4,
-        "upright": 0.6,
-        "pitch": 0.34,
+        "upright": 1.2,
+        "pitch": 0.8,
         "stationary": 0.75,
         "drift": 1.0,
         "zero_speed": 1.5,
@@ -1161,7 +1541,11 @@
         "braking": 0.35,
         "backslide": 0.25,
         "over_rated": 0.09,
-        "power": 0.0
+        "power": 0.0,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0
       },
       "gate": {
         "min_pass_rate": 0.9,
@@ -1169,42 +1553,45 @@
         "max_speed_mae_mps": 0.2,
         "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.12,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 4.75,
-        "max_pitch_deg": 9.5,
-        "max_mean_abs_steady_pitch_deg": 4.75,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.91,
+        "max_mean_abs_pitch_deg": 3.25,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 3.25,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
+        "max_mean_steady_wheel_slip_mps": 0.05,
+        "max_transient_wheel_slip_mps": 0.12,
         "max_stop_speed_mps": 0.012,
         "max_stop_speed_fraction_of_peak": 0.25,
         "max_hold_drift_m": 0.014,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       },
       "reward_defaults": {
         "speed_tolerance_base_mps": 0.03,
         "speed_tolerance_slope": 0.05,
-        "yaw_tolerance_base_rad_s": 0.05,
+        "underspeed_cost_limit": 1.0,
+        "yaw_tolerance_base_rad_s": 0.01,
         "straight_heading_tolerance_rad": 0.05236,
         "gate_penalty_ema_decay": 0.98,
-        "pitch_weight": 0.34,
-        "pitch_tolerance_rad": 0.082903139,
-        "wheel_slip_tolerance_mps": 0.12,
+        "pitch_tolerance_rad": 0.0567232,
+        "wheel_slip_tolerance_mps": 0.05,
         "acceleration_tolerance_mps2": 0.15,
         "zero_speed_tolerance_mps": 0.003,
         "drift_tolerance_m": 0.014
       },
       "overrides": {
-        "action_rate": 0.045
+        "action_rate": 0.045,
+        "fall": 20.0
       },
       "ppo": {
         "learning_rate": 0.0001,
         "n_epochs": 3,
         "target_kl": 0.02,
-        "ent_coef": 0.0015
+        "ent_coef": 0.003,
+        "actor_activation": "tanh",
+        "actor_obs_normalization": false
       }
     },
     "flat_motion_120": {
@@ -1219,6 +1606,8 @@
         "backward": 1.2,
         "yaw": 1.0
       },
+      "termination_tilt_deg": 20.0,
+      "hold_settle_time_s": 0.5,
       "control": {
         "wheel_speed_loop": "pi",
         "wheel_speed_target_max_rad_s": 17.0,
@@ -1226,7 +1615,10 @@
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 20.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5
       },
       "profiles": [
         {
@@ -1359,24 +1751,35 @@
         }
       ],
       "reward_weights": {
-        "speed": 3.6,
-        "underspeed": 0.9,
-        "yaw": 0.6,
-        "height": 1.4,
-        "upright": 0.6,
-        "pitch": 0.32,
+        "speed": 2.5,
+        "underspeed": 1.0,
+        "underspeed_cost": 0.4,
+        "yaw": 1.2,
+        "straight_heading": 1.2,
+        "cross_track": 1.2,
+        "wheel_slip_gate": 1.0,
+        "stop_speed_gate": 0.5,
+        "wheel_sync_gate": 1.5,
+        "wheel_chatter": 0.75,
+        "height": 1.8,
+        "upright": 1.2,
+        "pitch": 0.8,
         "stationary": 0.75,
         "drift": 1.0,
         "zero_speed": 1.5,
-        "acceleration": 0.7,
-        "wheel_slip": 0.28,
+        "acceleration": 0.6,
+        "wheel_slip": 0.3,
         "in_place": 0.0,
-        "vertical_velocity": 0.05,
-        "angular_xy": 0.1,
+        "vertical_velocity": 0.1,
+        "angular_xy": 0.2,
         "braking": 0.4,
-        "backslide": 0.25,
+        "backslide": 0.4,
         "over_rated": 0.08,
-        "power": 0.0
+        "power": 0.0,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0
       },
       "gate": {
         "min_pass_rate": 0.9,
@@ -1384,39 +1787,58 @@
         "max_speed_mae_mps": 0.2,
         "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.13,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 5.0,
+        "max_backslide_mps": 0.12,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.89,
+        "max_mean_abs_pitch_deg": 3.5,
         "max_pitch_deg": 10.0,
-        "max_mean_abs_steady_pitch_deg": 5.0,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_mean_abs_steady_pitch_deg": 3.5,
+        "max_mean_abs_roll_deg": 3.0,
+        "max_roll_deg": 5.0,
+        "max_final_heading_error_deg": 4.0,
+        "max_cross_track_error_m": 0.05,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
+        "max_mean_steady_wheel_slip_mps": 0.05,
+        "max_transient_wheel_slip_mps": 0.12,
         "max_stop_speed_mps": 0.013,
+        "max_final_speed_mps": 0.03,
         "max_stop_speed_fraction_of_peak": 0.25,
-        "max_hold_drift_m": 0.015,
+        "max_hold_drift_after_0.5s_m": 0.03,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       },
       "overrides": {
-        "action_rate": 0.05
+        "action_rate": 0.04,
+        "wheel_alignment": 1.5,
+        "fall": 20.0
       },
       "ppo": {
-        "learning_rate": 0.0001,
+        "learning_rate": 0.00005,
         "n_epochs": 3,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "ent_coef": 0.003,
+        "clip_range": 0.2,
+        "vf_coef": 0.5,
+        "max_grad_norm": 0.5,
         "target_kl": 0.02,
-        "ent_coef": 0.001
+        "actor_activation": "tanh",
+        "actor_obs_normalization": false
       },
       "reward_defaults": {
         "speed_tolerance_base_mps": 0.03,
-        "speed_tolerance_slope": 0.05,
-        "pitch_weight": 0.32,
-        "pitch_tolerance_rad": 0.087266463,
-        "wheel_slip_tolerance_mps": 0.12,
+        "speed_tolerance_slope": 0.0,
+        "yaw_tolerance_base_rad_s": 0.01,
+        "straight_heading_tolerance_rad": 0.05236,
+        "gate_penalty_ema_decay": 0.98,
+        "height_tolerance_m": 0.02,
+        "pitch_tolerance_rad": 0.061086524,
+        "wheel_slip_tolerance_mps": 0.05,
         "acceleration_tolerance_mps2": 0.2,
         "zero_speed_tolerance_mps": 0.003,
-        "drift_tolerance_m": 0.015
+        "drift_tolerance_m": 0.015,
+        "wheel_sync_tolerance_mps": 0.05
       }
     },
     "flat_motion_140": {
@@ -1579,7 +2001,12 @@
         "braking": 0.45,
         "backslide": 0.25,
         "over_rated": 0.07,
-        "power": 0.0
+        "power": 0.0,
+        "underspeed_cost": 0.4,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0
       },
       "gate": {
         "min_pass_rate": 0.9,
@@ -1587,20 +2014,20 @@
         "max_speed_mae_mps": 0.2,
         "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.14,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 5.25,
-        "max_pitch_deg": 10.5,
-        "max_mean_abs_steady_pitch_deg": 5.25,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.89,
+        "max_mean_abs_pitch_deg": 3.5,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 3.5,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
+        "max_mean_steady_wheel_slip_mps": 0.05,
+        "max_transient_wheel_slip_mps": 0.12,
         "max_stop_speed_mps": 0.014,
         "max_stop_speed_fraction_of_peak": 0.25,
         "max_hold_drift_m": 0.016,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       },
       "overrides": {
         "action_rate": 0.05
@@ -1618,14 +2045,17 @@
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 20.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5
       },
       "reward_defaults": {
         "speed_tolerance_base_mps": 0.03,
         "speed_tolerance_slope": 0.05,
-        "pitch_weight": 0.3,
-        "pitch_tolerance_rad": 0.091629786,
-        "wheel_slip_tolerance_mps": 0.12,
+        "yaw_tolerance_base_rad_s": 0.01,
+        "pitch_tolerance_rad": 0.061086524,
+        "wheel_slip_tolerance_mps": 0.05,
         "acceleration_tolerance_mps2": 0.2,
         "zero_speed_tolerance_mps": 0.003,
         "drift_tolerance_m": 0.016
@@ -1775,7 +2205,7 @@
       ],
       "reward_weights": {
         "speed": 4.0,
-        "underspeed": 1.1,
+        "underspeed": 1.0,
         "yaw": 0.6,
         "height": 1.4,
         "upright": 0.6,
@@ -1791,7 +2221,12 @@
         "braking": 0.5,
         "backslide": 0.25,
         "over_rated": 0.06,
-        "power": 0.0
+        "power": 0.0,
+        "underspeed_cost": 0.4,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0
       },
       "gate": {
         "min_pass_rate": 0.9,
@@ -1799,20 +2234,20 @@
         "max_speed_mae_mps": 0.2,
         "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.15,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 5.5,
-        "max_pitch_deg": 11.0,
-        "max_mean_abs_steady_pitch_deg": 5.5,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.89,
+        "max_mean_abs_pitch_deg": 3.5,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 3.5,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
+        "max_mean_steady_wheel_slip_mps": 0.05,
+        "max_transient_wheel_slip_mps": 0.12,
         "max_stop_speed_mps": 0.015,
         "max_stop_speed_fraction_of_peak": 0.25,
         "max_hold_drift_m": 0.017,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       },
       "overrides": {
         "action_rate": 0.06
@@ -1830,14 +2265,17 @@
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 20.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5
       },
       "reward_defaults": {
         "speed_tolerance_base_mps": 0.03,
         "speed_tolerance_slope": 0.05,
-        "pitch_weight": 0.28,
-        "pitch_tolerance_rad": 0.095993109,
-        "wheel_slip_tolerance_mps": 0.12,
+        "yaw_tolerance_base_rad_s": 0.01,
+        "pitch_tolerance_rad": 0.061086524,
+        "wheel_slip_tolerance_mps": 0.05,
         "acceleration_tolerance_mps2": 0.25,
         "zero_speed_tolerance_mps": 0.003,
         "drift_tolerance_m": 0.017
@@ -1987,7 +2425,7 @@
       ],
       "reward_weights": {
         "speed": 4.0,
-        "underspeed": 1.2,
+        "underspeed": 1.0,
         "yaw": 0.6,
         "height": 1.4,
         "upright": 0.6,
@@ -2003,7 +2441,12 @@
         "braking": 0.5,
         "backslide": 0.25,
         "over_rated": 0.05,
-        "power": 0.0
+        "power": 0.0,
+        "underspeed_cost": 0.4,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0
       },
       "gate": {
         "min_pass_rate": 0.9,
@@ -2011,20 +2454,20 @@
         "max_speed_mae_mps": 0.2,
         "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.15,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 5.75,
-        "max_pitch_deg": 11.5,
-        "max_mean_abs_steady_pitch_deg": 5.75,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.87,
+        "max_mean_abs_pitch_deg": 4.0,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 4.0,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
+        "max_mean_steady_wheel_slip_mps": 0.05,
+        "max_transient_wheel_slip_mps": 0.12,
         "max_stop_speed_mps": 0.016,
         "max_stop_speed_fraction_of_peak": 0.25,
         "max_hold_drift_m": 0.0185,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       },
       "overrides": {
         "action_rate": 0.06
@@ -2042,14 +2485,17 @@
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 20.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5
       },
       "reward_defaults": {
         "speed_tolerance_base_mps": 0.03,
         "speed_tolerance_slope": 0.05,
-        "pitch_weight": 0.26,
-        "pitch_tolerance_rad": 0.100356432,
-        "wheel_slip_tolerance_mps": 0.12,
+        "yaw_tolerance_base_rad_s": 0.01,
+        "pitch_tolerance_rad": 0.06981317,
+        "wheel_slip_tolerance_mps": 0.05,
         "acceleration_tolerance_mps2": 0.3,
         "zero_speed_tolerance_mps": 0.003,
         "drift_tolerance_m": 0.0185
@@ -2199,7 +2645,7 @@
       ],
       "reward_weights": {
         "speed": 4.0,
-        "underspeed": 1.2,
+        "underspeed": 1.0,
         "yaw": 0.6,
         "height": 1.4,
         "upright": 0.6,
@@ -2215,7 +2661,12 @@
         "braking": 0.6,
         "backslide": 0.25,
         "over_rated": 0.04,
-        "power": 0.0
+        "power": 0.0,
+        "underspeed_cost": 0.4,
+        "standing_wheel_sync": 1.0,
+        "standing_wheel_action": 0.8,
+        "settled_wheel_action": 1.0,
+        "settled_drift": 2.0
       },
       "gate": {
         "min_pass_rate": 0.9,
@@ -2223,20 +2674,20 @@
         "max_speed_mae_mps": 0.2,
         "max_speed_mae_fraction_of_peak": 0.15,
         "min_planned_peak_progress_fraction": 0.75,
-        "max_yaw_mae_rad_s": 0.15,
-        "min_upright": 0.96,
-        "max_mean_abs_pitch_deg": 6.0,
-        "max_pitch_deg": 12.0,
-        "max_mean_abs_steady_pitch_deg": 6.0,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.12,
-        "max_wheel_slip_fraction_of_peak": 0.25,
+        "max_yaw_mae_rad_s": 0.02,
+        "min_upright": 0.86,
+        "max_mean_abs_pitch_deg": 4.25,
+        "max_pitch_deg": 10.0,
+        "max_mean_abs_steady_pitch_deg": 4.25,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
+        "max_mean_steady_wheel_slip_mps": 0.05,
+        "max_transient_wheel_slip_mps": 0.12,
         "max_stop_speed_mps": 0.018,
         "max_stop_speed_fraction_of_peak": 0.25,
         "max_hold_drift_m": 0.02,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       },
       "overrides": {
         "action_rate": 0.07
@@ -2254,14 +2705,17 @@
         "wheel_speed_ki": 4.0,
         "wheel_integral_limit_nm": 2.0,
         "wheel_feedforward_nm_per_rad_s": 0.05,
-        "wheel_target_slew_rad_s2": 20.0
+        "wheel_target_slew_rad_s2": 20.0,
+        "wheel_velocity_feedforward_gain": 0.5,
+        "standing_wheel_target_cap_rad_s": 0.2,
+        "zero_wheel_after_hold_s": 0.5
       },
       "reward_defaults": {
         "speed_tolerance_base_mps": 0.03,
         "speed_tolerance_slope": 0.05,
-        "pitch_weight": 0.24,
-        "pitch_tolerance_rad": 0.104719755,
-        "wheel_slip_tolerance_mps": 0.12,
+        "yaw_tolerance_base_rad_s": 0.01,
+        "pitch_tolerance_rad": 0.074176493,
+        "wheel_slip_tolerance_mps": 0.05,
         "acceleration_tolerance_mps2": 0.3,
         "zero_speed_tolerance_mps": 0.003,
         "drift_tolerance_m": 0.02

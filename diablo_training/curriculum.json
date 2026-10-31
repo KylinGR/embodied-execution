@@ -11,7 +11,8 @@
     "composite"
   ],
   "target_whole_height_m": 0.491,
-  "target_base_height_m": 0.363140765,
+  "target_standing_height_m": 0.477859,
+  "target_base_height_m": 0.350,
   "validation_seeds": [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010],
   "blind_seeds": [3101, 3102, 3103, 3104, 3105, 3106, 3107, 3108, 3109, 3110],
   "limit_seeds": [4101, 4102, 4103],
@@ -35,7 +36,7 @@
       "zero_speed": 0.3,
       "wheel_alignment": 1.0,
       "wheel_sync": 0.5,
-      "fall": 200.0
+      "fall": 40.0
     },
     "speed_tolerance_base_mps": 0.08,
     "speed_tolerance_slope": 0.08,
@@ -44,7 +45,6 @@
     "yaw_zero_guard": 0.5,
     "height_tolerance_m": 0.025,
     "wheel_slip_tolerance_mps": 0.5,
-    "pitch_weight": 0.15,
     "pitch_tolerance_rad": 0.0873,
     "steady_pitch_acceleration_mps2": 0.01,
     "pitch_gate": {
@@ -54,10 +54,12 @@
     },
     "zero_speed_tolerance_mps": 0.03,
     "drift_tolerance_m": 0.2,
+    "evaluation_grace_s": 0.5,
     "wheel_alignment_tolerance_m": 0.01,
     "wheel_sync_tolerance_mps": 0.05,
     "straight_yaw_threshold_rad_s": 0.05,
-    "acceleration_tolerance_mps2": 0.8
+    "acceleration_tolerance_mps2": 0.8,
+    "settled_heading_drift_weight": 0.75
   },
   "randomization": {
     "friction_min": 0.65,
@@ -117,8 +119,9 @@
         "target_kl": 0.03
       },
       "reward_defaults": {
+        "evaluation_grace_s": 1.0,
         "speed_tolerance_base_mps": 0.03,
-        "yaw_tolerance_base_rad_s": 0.05,
+        "yaw_tolerance_base_rad_s": 0.02,
         "zero_speed_tolerance_mps": 0.02,
         "drift_tolerance_m": 0.03,
         "heading_tolerance_rad": 0.05236,
@@ -135,15 +138,16 @@
         "max_mean_abs_pitch_deg": 4.0,
         "max_pitch_deg": 8.0,
         "max_mean_abs_steady_pitch_deg": 4.0,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
         "max_cross_track_error_m": 0.03,
         "max_hold_drift_m": 0.05,
         "max_stop_speed_mps": 0.02,
-        "max_wheel_slip_mps": 0.08,
+        "max_settled_wheel_slip_mps": 0.08,
         "max_final_heading_error_deg": 3.0,
+        "max_heading_drift_after_0.5s_deg": 3.0,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.04,
+        "max_mean_settled_straight_wheel_speed_difference_mps": 0.04,
         "min_stop_cycles": 0
       },
       "control": {
@@ -189,14 +193,14 @@
         "min_planned_peak_progress_fraction": 0.5,
         "max_yaw_mae_rad_s": 0.15,
         "min_upright": 0.9,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
-        "max_wheel_slip_mps": 0.3,
-        "max_wheel_slip_fraction_of_peak": 0.5,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
+        "max_settled_wheel_slip_mps": 0.3,
+        "max_settled_wheel_slip_fraction_of_peak": 0.5,
         "max_stop_speed_mps": 0.1,
         "max_stop_speed_fraction_of_peak": 0.25,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       }
     },
     "flat_turning": {
@@ -231,12 +235,12 @@
         "max_speed_mae_mps": 0.2,
         "max_yaw_mae_rad_s": 0.2,
         "min_upright": 0.9,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
         "max_hold_drift_m": 0.2,
         "max_in_place_displacement_m": 0.2,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15
+        "max_settled_straight_wheel_speed_difference_mps": 0.15
       }
     },
     "flat_start_stop": {
@@ -268,12 +272,12 @@
         "max_speed_mae_mps": 0.15,
         "max_yaw_mae_rad_s": 0.15,
         "min_upright": 0.9,
-        "mean_height_tolerance_m": 0.02,
-        "max_height_deviation_m": 0.04,
+        "max_settled_mean_height_error_m": 0.02,
+        "max_settled_height_deviation_m": 0.04,
         "max_stop_speed_mps": 0.08,
         "max_hold_drift_m": 0.15,
         "max_wheel_center_offset_m": 0.03,
-        "max_straight_wheel_speed_difference_mps": 0.15,
+        "max_settled_straight_wheel_speed_difference_mps": 0.15,
         "min_stop_cycles": 3
       }
     },

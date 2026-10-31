@@ -13,7 +13,10 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 CURRICULUM_PATH = PACKAGE_DIR / "curriculum.json"
 SPEED_STAGES_PATH = PACKAGE_DIR / "flat_motion_speed_stages.json"
 
-TARGET_BASE_HEIGHT_M = 0.363140765
+TARGET_BASE_HEIGHT_M = 0.350
+TARGET_STANDING_HEIGHT_M = 0.477859
+RESET_CLEARANCE_M = 0.005
+RESET_BASE_HEIGHT_M = TARGET_BASE_HEIGHT_M + RESET_CLEARANCE_M
 TARGET_WHOLE_HEIGHT_M = 0.491
 PROPRIO_HISTORY_LENGTH = 5
 OBSERVATION_SHAPE = (125,)
@@ -52,12 +55,48 @@ _UNIT_MINIMUMS = {
     "min_planned_peak_progress_fraction",
     "min_upright",
 }
+_TRAINING_GATE_KEYS = {
+    "max_cross_track_error_m",
+    "max_settled_mean_height_error_m",
+    "max_wheel_slip_mps",
+    "max_settled_wheel_slip_mps",
+    "max_mean_steady_wheel_slip_mps",
+    "max_transient_wheel_slip_mps",
+    "max_wheel_slip_fraction_of_peak",
+    "max_settled_wheel_slip_fraction_of_peak",
+    "max_stop_speed_mps",
+    "max_straight_wheel_speed_difference_mps",
+    "max_settled_straight_wheel_speed_difference_mps",
+    "min_forward_progress_m",
+}
+_TRAINING_INTERFACE_FIELDS = {
+    "observation_shape",
+    "observation_dtype",
+    "observation_breakdown",
+    "action_shape",
+    "action_dtype",
+    "action_order",
+    "control_dt_s",
+    "target_base_height_m",
+    "target_standing_height_m",
+    "reset_base_height_m",
+}
+_WARM_START_FIELDS = {
+    "observation_shape",
+    "observation_dtype",
+    "observation_breakdown",
+    "action_shape",
+    "action_dtype",
+    "action_order",
+    "control_dt_s",
+}
 
 
 @dataclass(frozen=True)
 class Course:
     stages: dict[str, dict[str, Any]]
     order: tuple[str, ...]
+    ppo: dict[str, Any]
     reward_defaults: dict[str, Any]
     reward_penalties: dict[str, float]
     randomization: dict[str, float]
@@ -78,7 +117,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def load_course() -> Course:
-    """Load both supplied courses and apply the hardware height correction."""
+    """Load both supplied courses and validate the calibrated height contract."""
     base = _read_json(CURRICULUM_PATH)
     speed = _read_json(SPEED_STAGES_PATH)
     for source in (base, speed):
@@ -87,6 +126,11 @@ def load_course() -> Course:
                 "Course target_base_height_m must match the calibrated "
                 f"{TARGET_BASE_HEIGHT_M} m model height"
             )
+        if (
+            float(source.get("target_standing_height_m", -1))
+            != TARGET_STANDING_HEIGHT_M
+        ):
+            raise ValueError("Course target_standing_height_m is inconsistent")
         if float(source.get("target_whole_height_m", -1)) != TARGET_WHOLE_HEIGHT_M:
             raise ValueError("Course target_whole_height_m is inconsistent")
     stages = dict(base["stages"])
@@ -124,6 +168,7 @@ def load_course() -> Course:
     return Course(
         stages=stages,
         order=order,
+        ppo=base["ppo"],
         reward_defaults=base["reward_defaults"],
         reward_penalties=base["reward_defaults"]["common_penalties"],
         randomization=base["randomization"],
@@ -146,6 +191,12 @@ def reward_defaults_for_stage(course: Course, stage_name: str) -> dict[str, Any]
             f"{stage_name}: hold_settle_time_s must be finite and nonnegative"
         )
     defaults["hold_settle_time_s"] = settle_time
+    grace_time = float(defaults.get("evaluation_grace_s", 0.0))
+    if not math.isfinite(grace_time) or grace_time < 0.0:
+        raise ValueError(
+            f"{stage_name}: evaluation_grace_s must be finite and nonnegative"
+        )
+    defaults["evaluation_grace_s"] = grace_time
     return defaults
 
 
@@ -292,12 +343,23 @@ def gate_score(metrics: dict[str, float | bool], gate: dict[str, Any]) -> dict[s
         "stability": mean(
             "min_upright",
             "mean_height_tolerance_m",
+            "max_settled_mean_height_error_m",
             "max_height_deviation_m",
+            "max_settled_height_deviation_m",
             "max_wheel_center_offset_m",
             "max_straight_wheel_speed_difference_mps",
+            "max_settled_straight_wheel_speed_difference_mps",
+            "max_mean_settled_straight_wheel_speed_difference_mps",
         ),
         "terrain": mean("min_obstacle_passes", "max_backslide_mps"),
-        "efficiency": mean("max_wheel_slip_mps"),
+        "efficiency": mean(
+            "max_wheel_slip_mps",
+            "max_settled_wheel_slip_mps",
+            "max_mean_steady_wheel_slip_mps",
+            "max_transient_wheel_slip_mps",
+            "max_wheel_slip_fraction_of_peak",
+            "max_settled_wheel_slip_fraction_of_peak",
+        ),
     }
     power = max(0.0, float(metrics.get("mean_positive_power_w", 0.0)))
     components["efficiency"] = 0.9 * components["efficiency"] + 0.1 * max(
@@ -358,9 +420,65 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def stage_training_contract(course: Course, stage_name: str) -> dict[str, Any]:
+    """Return a stable fingerprint of only what the current stage consumes."""
+    stage = course.stage(stage_name)
+    ppo = dict(course.ppo)
+    ppo.update(stage.get("ppo", {}))
+    reward_defaults = reward_defaults_for_stage(course, stage_name)
+    reward_defaults.pop("evaluation_grace_s", None)
+    penalties = dict(course.reward_penalties)
+    penalties.update(stage.get("overrides", {}))
+    stage_semantics = {
+        key: value
+        for key, value in stage.items()
+        if key
+        not in {
+            "budget",
+            "gate",
+            "ppo",
+            "reward_defaults",
+            "overrides",
+        }
+    }
+    interface = policy_interface_contract(course)
+    content = {
+        "version": 1,
+        "stage": stage_name,
+        "interface": {
+            key: interface[key] for key in sorted(_TRAINING_INTERFACE_FIELDS)
+        },
+        "stage_semantics": stage_semantics,
+        "gate": {
+            key: stage["gate"][key]
+            for key in sorted(_TRAINING_GATE_KEYS & set(stage["gate"]))
+        },
+        "reward_defaults": reward_defaults,
+        "penalties": penalties,
+        "randomization": course.randomization,
+        "ppo": ppo,
+        "source_sha256": {
+            path.name: sha256(path)
+            for path in (
+                PACKAGE_DIR / "model.py",
+                PACKAGE_DIR / "control.py",
+                PACKAGE_DIR / "mjlab_tasks.py",
+                PACKAGE_DIR / "upstream.lock.json",
+            )
+        },
+    }
+    return {
+        "version": content["version"],
+        "stage": stage_name,
+        "sha256": hashlib.sha256(
+            json.dumps(content, sort_keys=True).encode()
+        ).hexdigest(),
+    }
+
+
 def policy_interface_contract(course: Course) -> dict[str, Any]:
     return {
-        "version": 7,
+        "version": 8,
         "backend": "mjlab-rsl-rl",
         "mjlab": "1.6.0",
         "mujoco": "3.11.x",
@@ -381,6 +499,8 @@ def policy_interface_contract(course: Course) -> dict[str, Any]:
         ],
         "control_dt_s": 0.01,
         "target_base_height_m": TARGET_BASE_HEIGHT_M,
+        "target_standing_height_m": TARGET_STANDING_HEIGHT_M,
+        "reset_base_height_m": RESET_BASE_HEIGHT_M,
         "target_whole_height_m": TARGET_WHOLE_HEIGHT_M,
     }
 
@@ -415,11 +535,7 @@ def interface_contract(course: Course) -> dict[str, Any]:
 
 
 def verify_interface_contract(content: dict[str, Any]) -> None:
-    expected = content.get("sha256")
-    unsigned = {key: value for key, value in content.items() if key != "sha256"}
-    actual = hashlib.sha256(json.dumps(unsigned, sort_keys=True).encode()).hexdigest()
-    if expected != actual:
-        raise ValueError("MJLab run contract is missing or inconsistent")
+    _verify_contract_seal(content)
     current = policy_interface_contract(load_course())
     mismatched = [
         field
@@ -433,9 +549,34 @@ def verify_interface_contract(content: dict[str, Any]) -> None:
         )
 
 
+def _verify_contract_seal(content: dict[str, Any]) -> None:
+    expected = content.get("sha256")
+    unsigned = {key: value for key, value in content.items() if key != "sha256"}
+    actual = hashlib.sha256(json.dumps(unsigned, sort_keys=True).encode()).hexdigest()
+    if expected != actual:
+        raise ValueError("MJLab run contract is missing or inconsistent")
+
+
+def verify_warm_start_contract(content: dict[str, Any]) -> None:
+    """Validate actor I/O only, allowing the task and reward to change."""
+    _verify_contract_seal(content)
+    current = policy_interface_contract(load_course())
+    mismatched = [
+        field
+        for field in sorted(_WARM_START_FIELDS)
+        if content.get(field) != current[field]
+    ]
+    if mismatched:
+        raise ValueError(
+            "Checkpoint actor interface is incompatible; mismatched fields: "
+            + ", ".join(mismatched)
+        )
+
+
 def verify_run_contract(
     payload: dict[str, Any],
     stage_name: str | None = None,
+    require_current_sources: bool = False,
 ) -> dict[str, Any]:
     contract = payload.get("contract")
     if not isinstance(contract, dict):
@@ -446,17 +587,55 @@ def verify_run_contract(
         raise ValueError(
             f"Run stage is {actual_stage}, requested {stage_name}"
         )
+    if require_current_sources:
+        if actual_stage is None:
+            raise ValueError("Resume comparison requires a saved stage")
+        saved_training = payload.get("training_contract")
+        if saved_training is None:
+            current_sources = interface_contract(load_course())["source_sha256"]
+            if contract.get("source_sha256") != current_sources:
+                raise ValueError(
+                    "Legacy checkpoint has no stage training fingerprint; "
+                    "start a new run"
+                )
+        else:
+            current_training = stage_training_contract(
+                load_course(),
+                actual_stage,
+            )
+            if saved_training != current_training:
+                raise ValueError(
+                    f"Checkpoint training contract differs for stage "
+                    f"{actual_stage}; start a new run"
+                )
     return contract
 
 
 def load_run_contract(
     path: Path,
     stage_name: str | None = None,
+    require_current_sources: bool = False,
 ) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"Missing run contract: {path}")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return verify_run_contract(payload, stage_name)
+    return verify_run_contract(
+        payload,
+        stage_name,
+        require_current_sources=require_current_sources,
+    )
+
+
+def load_warm_start_contract(path: Path) -> dict[str, Any]:
+    """Load a run contract using actor-only compatibility rules."""
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing run contract: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    contract = payload.get("contract")
+    if not isinstance(contract, dict):
+        raise ValueError("Run contract is missing the nested 'contract' object")
+    verify_warm_start_contract(contract)
+    return payload
 
 
 if __name__ == "__main__":

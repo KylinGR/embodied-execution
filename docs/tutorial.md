@@ -21,14 +21,16 @@
 
 ## 2. 硬件和模型参数
 
-公开产品页给出的刑天参数包括：6 个直驱关节、整机 22.9 kg、最高持续速度 2 m/s、站立负载 4 kg、匍匐负载 80 kg。项目保留 CAD 的六主动关节、四被动关节和两个平行四边形闭环，并把 CAD 各刚体质量与惯量按同一比例归一化到 22.9 kg。
+公开产品页给出的刑天参数包括：6 个直驱关节、整机 22.9 kg、最高持续速度 2 m/s、站立负载 4 kg、匍匐负载 80 kg。产品页质量是外部产品规格，不是模型输入。机器人模型严格采用原始主分支的 CAD 质量、惯量和质心分布，编译质量为 `21.019506 kg`；不做质量缩放，也不覆盖 CAD 质心。
 
-课程文件中另有两个基座高度：
+恢复正常默认关节姿态后：
 
-- `0.25175 m` 与当前默认姿态和轮底几何不一致，已作为旧值替换；
-- `0.270943 m` 等于当前 CAD 默认姿态的轮底高度再加 5 mm，作为实际训练目标。
+- 默认健康关节角为 `[0.969324,-1.938616,0,0.969324,-1.938616,0] rad`；
+- 默认健康站姿下，轮底接地时基座原点为 `z=0.350 m`，整机外形高约 `0.477859 m`；
+- 复位从基座 `z=0.355 m` 开始，保留约 `5 mm` 离地间隙；
+- 产品资料中的上部高度包络 `0.491 m` 不再作为训练高度指令。
 
-`0.37958 m` 保留为课程整机高度包络。官网当前页面给出的 491 mm 属于另一版整机尺寸，未用于覆盖本仓库的 CAD 模型。
+官网整机质量、整机高度和轮径中与公开 CAD 不一致的数值只作外部参考，不用于覆盖锁定资源。
 
 关键模型参数：
 
@@ -37,7 +39,7 @@
 | 主动电机 | 6 |
 | 被动关节 | 4 |
 | 平行四边形闭环 | 2 |
-| 总质量 | 22.9 kg |
+| CAD 总质量 | 21.019506 kg |
 | 主轮半径 | 0.1 m |
 | 堵转力矩 | 17 Nm |
 | 额定力矩 | 9.6 Nm |
@@ -78,12 +80,7 @@ diablo gpu-doctor
 
 ## 5. 观测接口
 
-Actor 输入固定为 `[B,160]`：
-
-| 部分 | 维度 | 内容 |
-|---|---:|---|
-| 本体历史 | 125 | 当前 25 维本体观测的五帧历史 |
-| 地形扫描 | 35 | 前向 `7×5` 高度网格 |
+Actor 输入固定为 `float32[B,125]`，即当前 25 维本体观测的五帧历史。Actor 不包含地形扫描，输入输出维度和类型不得随模型物理资料恢复而改变。
 
 单帧本体观测 25 维：
 
@@ -94,7 +91,7 @@ Actor 输入固定为 `[B,160]`：
 - 六电机速度 6，轮速度按前进方向统一符号；
 - 上一时刻动作 6。
 
-Critic 使用相同本体与地形输入，并增加真实基体速度、基座高度、地形表面法向和轮地接触。该特权信息不进入 Actor，也不进入 ONNX。
+Critic 使用相同本体历史，并增加真实基体速度、基座高度、横向位置误差、世界横向速度、目标路径法向速度、`7×5` 地形扫描、地形表面法向和轮地接触。该特权信息不进入 Actor，也不进入 ONNX。
 
 ## 6. 动作接口
 
@@ -119,15 +116,18 @@ right_hip, right_knee, right_wheel
 
 | 顺序 | 阶段 | budget | 重点 |
 |---:|---|---:|---|
-| 1 | `flat_balance` | 10M | 高度、直立、静止和漂移 |
-| 2–11 | `flat_motion_020` … `flat_motion_200` | 每阶段 8M | 0.2–2.0 m/s 速度阶梯 |
-| 12 | `flat_motion` | 12M | 平地运动综合 |
-| 13 | `flat_turning` | 10M | 原地和行驶转向 |
-| 14 | `flat_start_stop` | 10M | 三次以上启停 |
-| 15 | `slope` | 14M | 35° 坡道 |
-| 16 | `rough` | 16M | 连续崎岖地形 |
-| 17 | `roller_obstacle` | 10M | 低高度可碾压障碍 |
-| 18 | `composite` | 22M | 长时综合任务 |
+| 1 | `flat_balance` | 40M | 高度、直立、静止和漂移 |
+| 2 | `flat_motion_010` | 6M | 0.1 m/s 低速起步 |
+| 3 | `flat_motion_020` | 8M | 0.2 m/s |
+| 4 | `flat_motion_030` | 6M | 0.3 m/s |
+| 5–13 | `flat_motion_040` … `flat_motion_200` | 每阶段 8M | 0.4–2.0 m/s |
+| 14 | `flat_motion` | 12M | 平地运动综合 |
+| 15 | `flat_turning` | 10M | 原地和行驶转向 |
+| 16 | `flat_start_stop` | 10M | 三次以上启停 |
+| 17 | `slope` | 14M | 35° 坡道 |
+| 18 | `rough` | 16M | 连续崎岖地形 |
+| 19 | `roller_obstacle` | 10M | 低高度可碾压障碍 |
+| 20 | `composite` | 22M | 长时综合任务 |
 
 budget 是新增环境 transition 总数。默认每环境 rollout 为 24 步，迭代数为：
 
@@ -155,13 +155,13 @@ ceil(budget / (num_envs × 24))
 正向形状项：
 
 - 前进速度、低于目标速度、偏航速度和基座高度；
-- 直立、俯仰、静止、保持漂移；
+- 直立、俯仰、静止、位置保持漂移和角度保持漂移；
 - 加速度、制动、原地转向；
 - 轮速与机体速度匹配；
 
 惩罚项：
 
-- 横向速度、动作变化率、关节力矩和超过额定力矩；
+- 目标路径法向速度、动作变化率、关节力矩和超过额定力矩；
 - 关节软限位、轮滑、后滑；
 - 左右轮中心偏差和直行轮速差；
 - 垂直速度、横滚/俯仰角速度；
@@ -173,7 +173,36 @@ ceil(budget / (num_envs × 24))
 - `slope_crest`；
 - `finish`。
 
-每回合同时累计速度/偏航 MAE、直立比例、俯仰和横滚、高度误差、轮滑、后滑、轮同步、停车速度、保持漂移、前进距离、启停次数、障碍数和终点状态。
+每回合同时累计速度/偏航 MAE、直立比例、俯仰和横滚、高度误差、轮滑、后滑、轮同步、停车速度、位置保持漂移、角度保持漂移、前进距离、启停次数、障碍数和终点状态。
+
+所有训练阶段都使用目标路径法向速度惩罚横向漂移。对直线路径，该量等于与目标航向垂直的世界横向速度，既包含机体系横向速度，也包含“以错误航向向前行驶”产生的世界横向分量。Critic 额外接收横向位置误差、世界横向速度和路径法向速度；部署 Actor 的本体观测维度保持不变。
+
+三个航向相关指标含义不同：
+
+- `yaw_mae_rad_s` 是整回合平均偏航角速度跟踪误差。速度阶梯阶段 gate 为 `0.02 rad/s`（约 `1.15°/s`），奖励容差为 `0.01 rad/s`；复杂地形阶段保留各自门限。
+- `heading_drift_after_0.5s_deg` 是每次静止保持完成 `0.5 s` 建立后，该保持窗口内相对建立时刻的最大角度漂移。训练使用其 Huber 损失；有硬门限时容差取门限的 `75%`，没有门限时回退到 `heading_tolerance_rad`。
+- `max_hold_drift_m` 是位置漂移，单位为米，不能用于替代角度漂移。
+
+速度阶梯的俯仰门限随速度缓升，最大俯仰统一为 `10°`：
+
+| 速度阶段 | 平均/稳态 pitch | `min_upright` |
+|---|---:|---:|
+| `0.1–0.4 m/s` | `3°` | `0.93` |
+| `0.6–1.0 m/s` | `3.25°` | `0.91` |
+| `1.2–1.6 m/s` | `3.5°` | `0.89` |
+| `1.8 m/s` | `4°` | `0.87` |
+| `2.0 m/s` | `4.25°` | `0.86` |
+
+`upright = exp(-(roll² + pitch²) / 0.04)` 同时约束横滚和俯仰。表中 upright 门限对应约 `3.1°–3.7°` 的纯姿态等效 RMS，为高速瞬态和横滚保留余量。
+
+速度阶梯阶段的轮滑拆成两项：
+
+- `mean_steady_wheel_slip_mps` 只统计移动、直行、指令平台保持至少 `0.5 s` 后的轮面速度与机体速度差，排除起步、加减速和指令切换。
+- `transient_wheel_slip_mps` 是整体启动宽限后的最大轮滑，用于发现冲击和短暂失配。
+
+轮滑百分比继续作为诊断日志保留，但速度阶梯不再同时用绝对值和百分比形成互相冲突的硬门限。`flat_balance` 继续统计 `1.0 s` 后的稳态指标；其他平地阶段使用 `0.5 s` 启动宽限。
+
+训练日志把自定义总奖励拆为 `Reward/height`、`Reward/posture`、`Reward/stationary`、`Reward/tracking`、`Reward/wheel_quality`、`Reward/effort` 和 `Reward/fall`，各组之和为 `Reward/total`。
 
 ## 10. 训练
 
@@ -213,6 +242,42 @@ diablo train \
   --stage flat_motion_020 \
   --resume logs/rsl_rl/diablo_xingtian_course/<run>/model_<iter>.pt
 ```
+
+续训会比较当前阶段实际消费的训练指纹，包括动作/观测接口、该阶段课程、奖励、终止、随机化和 PPO 配置，以及模型、控制与任务代码哈希。修改其他阶段或仅修改评估 gate 不会阻止当前阶段续训；修改当前阶段训练语义仍会要求新建 run。
+
+旧版 run 的 `contract.json` 没有阶段训练指纹，仍使用保守的全源码哈希回退；这类 run 在升级后需要重新生成一次。
+
+跨阶段训练只复用旧策略，不继承旧 critic、优化器或训练迭代状态：
+
+```bash
+diablo train \
+  --stage flat_motion_010 \
+  --warm-start logs/rsl_rl/diablo_xingtian_course/<run>/model_<iter>.pt \
+  --transfer actor \
+  --initial-std 0.5
+```
+
+该命令接受原生 RSL-RL `.pt` checkpoint、`diablo-rsl-actor-v1` actor bundle，或可自动转换的 SB3 `.zip`。`--warm-start` 与 `--resume` 互斥，并始终创建新 run、新 optimizer 和迭代 0。
+
+来自本项目 run 的权重会同时校验 actor 输入输出契约；外部 actor bundle/`.zip` 没有 `contract.json` 时只允许 `--transfer actor`，并依赖严格权重形状检查。
+
+可选的 critic 迁移：
+
+```bash
+diablo train \
+  --stage flat_motion_020 \
+  --warm-start logs/rsl_rl/diablo_xingtian_course/<run>/model_<iter>.pt \
+  --transfer actor-critic \
+  --initial-std 0.5 \
+  --critic-calibration-steps 5000
+```
+
+- `--transfer actor` 只复制 actor，critic 和 optimizer 全新初始化。
+- `--transfer actor-critic` 要求原生 RSL-RL checkpoint，额外复制 critic，但仍拒绝继承源 optimizer 和迭代。
+- `--initial-std` 覆盖复制后 actor 的动作标准差，用于恢复跨阶段探索。
+- `--critic-calibration-steps` 冻结 actor，用新阶段环境只校准 critic；实际按完整 PPO rollout 向上取整，请求值、实际迭代数和 transitions 写入 checkpoint 的 `infos.actor_init`。
+
+`course-train` 同样接收 `--transfer`、`--initial-std` 和 `--critic-calibration-steps`，阶段之间默认使用 actor-only warm-start。
 
 多 GPU：
 
@@ -305,7 +370,7 @@ diablo export \
   --output runs/final-export
 ```
 
-ONNX 的 Actor 输入为 `[N,160]`，输出为 `[N,6]`。导出成功只证明网络与接口一致；实机部署仍需零位、电机驱动、通信延迟、负载和安全性标定。
+ONNX 的 Actor 输入为 `float32[N,125]`，输出为 `float32[N,6]`。导出成功只证明网络与接口一致；实机部署仍需零位、电机驱动、通信延迟、负载和安全性标定。
 
 ## 13. 测试
 
@@ -325,7 +390,7 @@ DIABLO_GPU_CHECK=1 bash scripts/check_training.sh
 
 额外运行 GPU doctor、随机动作 smoke、短 PPO、checkpoint 重载、单回合评估和 ONNX 导出。
 
-完整课程包含约 184M transition。CI 中不执行完整训练，也不把短训练结果作为运动能力证据。
+完整课程包含约 226M transition。CI 中不执行完整训练，也不把短训练结果作为运动能力证据。
 
 ### 交付检查记录
 
@@ -333,7 +398,7 @@ DIABLO_GPU_CHECK=1 bash scripts/check_training.sh
 
 - `python -m compileall` 通过；
 - 14 项课程、gate、评分和 CPU 模型测试全部通过；
-- 使用 MuJoCo 3.11.0 和锁定公开资源验证 22.9 kg、六执行器、两个闭环、正向轮动作、FK、虚功和重置；
+- 使用 MuJoCo 3.11.0 和锁定公开资源验证主分支 CAD 基线、六执行器、两个闭环、正向轮动作、FK、虚功和重置；
 - wheel 构建成功，包含两份 JSON 和 `mjlab.tasks` entry point；
 - 当前机器无 NVIDIA GPU、MuJoCo Warp 和 MJLab，因此未声称 GPU smoke 或策略训练通过。
 

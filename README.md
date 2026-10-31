@@ -7,9 +7,10 @@
 ## 项目功能
 
 - 从公开 CAD 和 Webots 机构构建六主动关节、四被动关节及两个平行四边形闭环。
-- 保留六个电机、IMU、轮地接触和地形射线感知；总质量归一化为官网 22.9 kg。
-- 提供 18 个 MJLab 阶段任务：平衡、0.2–2.0 m/s 速度阶梯、平地综合运动、转向、多次启停、35° 坡、崎岖地形、碾压障碍和综合路线。
-- 奖励和 gate 直接读取任务课程 JSON，包括速度、偏航、高度、姿态、启停、轮滑、轮同步、后滑和障碍事件。
+- 保留六个电机、IMU、轮地接触和地形射线感知；机器人质量、惯量和几何采用原始主分支的 CAD 基线 `21.019506 kg`，不缩放成官网整机质量。
+- 默认健康站姿在轮底接地时为 `477.859 mm`，基座目标 `0.350 m`，复位保留 `5 mm` 离地间隙；`491 mm` 继续作为产品上部包络元数据。
+- 提供 20 个 MJLab 阶段任务：平衡、0.1–2.0 m/s 速度阶梯、平地综合运动、转向、多次启停、35° 坡、崎岖地形、碾压障碍和综合路线。
+- 奖励和 gate 直接读取任务课程 JSON，包括速度、偏航、航向保持漂移、目标路径法向速度、高度、姿态、启停、稳态/瞬态轮滑、轮同步、后滑和障碍事件。
 - 最终综合阶段从全部周期 checkpoint 中执行 3 种子初筛、5 个新种子复筛，并保存 `policy-best.pt` / `policy-best.onnx`。
 - 保留 CPU 机构校核；旧单线程训练、评估、续训和示例路径已移除。
 
@@ -66,6 +67,27 @@ diablo train \
   --resume logs/rsl_rl/diablo_xingtian_course/<run>/model_<iter>.pt
 ```
 
+跨阶段只迁移 actor，并为新阶段创建新的 critic 和优化器：
+
+```bash
+diablo train \
+  --stage flat_motion_010 \
+  --warm-start logs/rsl_rl/diablo_xingtian_course/<run>/bestmodel.pt
+```
+
+`--resume` 只比较当前阶段的训练语义，修改其他阶段不会误拦截。`--warm-start` 会新建目标阶段 run；`--transfer actor` 只复制 actor，`--transfer actor-critic` 可同时复制 critic。两者不能同时使用，warm-start 始终重置 optimizer 和迭代。
+
+```bash
+diablo train \
+  --stage flat_motion_020 \
+  --warm-start <010-run>/model_<iter>.pt \
+  --transfer actor-critic \
+  --initial-std 0.5 \
+  --critic-calibration-steps 5000
+```
+
+改变模型、奖励或课程配置后，旧 run 不能续训；续训会拒绝源码哈希不一致的 checkpoint。
+
 ## 最佳权重筛选
 
 `composite` 阶段默认每 10 次迭代保存一个 checkpoint。单独执行筛选：
@@ -98,7 +120,7 @@ diablo export \
   --output runs/export
 ```
 
-Actor 输入为 `[B,160]`（125 维本体历史和 35 维地形扫描），输出为六维归一化动作。导出的 ONNX 是仿真训练接口，不是刑天实机控制器；`hardware_authorized=false`。
+Actor 输入为 `float32[B,125]`，由五帧 25 维本体观测组成；输出为 `float32[B,6]` 归一化动作。地形扫描只进入 Critic。导出的 ONNX 是仿真训练接口，不是刑天实机控制器；`hardware_authorized=false`。
 
 ## 验证
 
@@ -107,6 +129,6 @@ bash scripts/check_training.sh
 DIABLO_GPU_CHECK=1 bash scripts/check_training.sh
 ```
 
-第一条执行语法、公开课程、CPU 机构和统计逻辑检查。第二条还执行 GPU smoke、短 PPO、checkpoint 重载和 ONNX 导出。完整 184M transition 训练和使用 blind seeds 通过 gate 是独立的人工验收步骤。
+第一条执行语法、公开课程、CPU 机构和统计逻辑检查。第二条还执行 GPU smoke、短 PPO、checkpoint 重载和 ONNX 导出。完整 226M transition 训练和使用 blind seeds 通过 gate 是独立的人工验收步骤。
 
 详细说明见 [训练文档](docs/tutorial.md)，模型接口见 [模型契约](docs/model-interface.md)。

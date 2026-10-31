@@ -24,6 +24,7 @@ from .model import (
     LEGS,
     OBSERVATION_SIGNS,
     PHYSICS_DT,
+    RESET_BASE_HEIGHT_M,
     TARGET_BASE_HEIGHT_M,
     closure_errors,
     make_model,
@@ -189,7 +190,7 @@ class DiabloEnv(gym.Env):
         )
         if not np.isfinite(self.speed) or abs(self.speed) > self.config.max_speed:
             raise ValueError("Requested speed is outside the configured command range")
-        self.data.qpos[2] = TARGET_BASE_HEIGHT_M
+        self.data.qpos[2] = RESET_BASE_HEIGHT_M
         self.data.qpos[3:7] = [1, 0, 0, 0]
         self.start_heading = 0.0
         set_pose(self.model, self.data, DEFAULT_Q)
