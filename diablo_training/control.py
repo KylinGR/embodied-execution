@@ -1,8 +1,48 @@
 """Explicit motor-space action mapping, separated from policy and reward."""
 
 import numpy as np
+import torch
 
 from .model import DEFAULT_Q, NO_LOAD_SPEED, OBSERVATION_SIGNS, STALL_TORQUE, WHEELS
+
+
+def wheel_command_targets(
+    command: torch.Tensor,
+    residual_action: torch.Tensor,
+    *,
+    radius: float,
+    half_track: float,
+    feedforward_gain: float,
+    yaw_feedforward_gain: float,
+    residual_scale_rad_s: float,
+    speed_limit: float = NO_LOAD_SPEED,
+) -> torch.Tensor:
+    """Map forward/yaw commands and two residual actions to wheel velocities."""
+    if command.ndim != 2 or command.shape[-1] != 3:
+        raise ValueError(
+            f"command must have shape [batch,3], got {tuple(command.shape)}"
+        )
+    if residual_action.shape != (command.shape[0], 2):
+        raise ValueError(
+            "residual_action must have shape "
+            f"[{command.shape[0]},2], got {tuple(residual_action.shape)}"
+        )
+    if radius <= 0.0 or half_track < 0.0 or residual_scale_rad_s < 0.0:
+        raise ValueError("Wheel geometry and residual scale must be valid")
+
+    command = command.to(
+        device=residual_action.device,
+        dtype=residual_action.dtype,
+    )
+    forward = command[:, 0]
+    yaw = command[:, 1]
+    left_speed = forward - yaw_feedforward_gain * yaw * half_track
+    right_speed = forward + yaw_feedforward_gain * yaw * half_track
+    nominal = -feedforward_gain * torch.stack(
+        (left_speed, right_speed), dim=-1
+    ) / radius
+    target = nominal - residual_scale_rad_s * residual_action
+    return torch.clamp(target, -speed_limit, speed_limit)
 
 
 def radial_feedforward(motor_q, force=60.0):

@@ -9,8 +9,9 @@
 - 从公开 CAD 和 Webots 机构构建六主动关节、四被动关节及两个平行四边形闭环。
 - 保留六个电机、IMU、轮地接触和地形射线感知；机器人质量、惯量和几何采用原始主分支的 CAD 基线 `21.019506 kg`，不缩放成官网整机质量。
 - 默认健康站姿在轮底接地时为 `477.859 mm`，基座目标 `0.350 m`，复位保留 `5 mm` 离地间隙；`491 mm` 继续作为产品上部包络元数据。
-- 提供 20 个 MJLab 阶段任务：平衡、0.1–2.0 m/s 速度阶梯、平地综合运动、转向、多次启停、35° 坡、崎岖地形、碾压障碍和综合路线。
-- 奖励和 gate 直接读取任务课程 JSON，包括速度、偏航、航向保持漂移、目标路径法向速度、高度、姿态、启停、稳态/瞬态轮滑、轮同步、后滑和障碍事件。
+- 提供 20 个 MJLab 阶段任务：平衡、0.1–2.0 m/s 速度阶梯、平地综合运动、转向、多次启停、30° 坡、崎岖地形、碾压障碍和综合路线。
+- 使用无外部记忆状态的时序残差 Actor-Critic：五帧分组编码、因果卷积、指令 FiLM、髋膝/轮速双输出头和解析轮速前馈。
+- 奖励和 gate 直接读取任务课程 JSON，包括速度、方向性超速、偏航、航向保持漂移、目标路径法向速度、高度、姿态、启停、稳态/瞬态轮滑、轮同步、后滑和障碍事件。
 - 最终综合阶段从全部周期 checkpoint 中执行 3 种子初筛、5 个新种子复筛，并保存 `policy-best.pt` / `policy-best.onnx`。
 - 保留 CPU 机构校核；旧单线程训练、评估、续训和示例路径已移除。
 
@@ -59,6 +60,18 @@ diablo course-train \
 diablo train --stage flat_balance --n-envs 4096 --gpu-ids 0
 ```
 
+新策略可先对 `flat_motion_020` 做约 2M transition 的筛选；在 4096 个环境、
+每环境 24 步的默认 rollout 下对应 21 次迭代。筛选通过后再使用阶段默认的 8M
+预算完成正式训练。
+
+```bash
+diablo train \
+  --stage flat_motion_020 \
+  --n-envs 4096 \
+  --gpu-ids 0 \
+  --iterations 21
+```
+
 从上一阶段 checkpoint 继续：
 
 ```bash
@@ -82,7 +95,7 @@ diablo train \
   --stage flat_motion_020 \
   --warm-start <010-run>/model_<iter>.pt \
   --transfer actor-critic \
-  --initial-std 0.5 \
+  --initial-std 0.3 \
   --critic-calibration-steps 5000
 ```
 
@@ -120,7 +133,7 @@ diablo export \
   --output runs/export
 ```
 
-Actor 输入为 `float32[B,125]`，由五帧 25 维本体观测组成；输出为 `float32[B,6]` 归一化动作。地形扫描只进入 Critic。导出的 ONNX 是仿真训练接口，不是刑天实机控制器；`hardware_authorized=false`。
+Actor 输入为 `float32[B,125]`，由五帧 25 维本体观测组成；输出为 `float32[B,6]` 归一化动作。Actor 在内部把输入还原为五帧序列，使用小型因果卷积和 MLP 生成髋膝与轮速残差。轮速目标由前向/偏航运动学前馈加网络残差构成；地形扫描只进入 Critic。导出的 ONNX 单输入、单输出，是仿真训练接口，不是刑天实机控制器；`hardware_authorized=false`。
 
 ## 验证
 

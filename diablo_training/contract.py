@@ -53,6 +53,7 @@ _UNIT_MINIMUMS = {
     "min_duration_fraction",
     "min_pass_rate",
     "min_planned_peak_progress_fraction",
+    "min_cruise_speed_fraction",
     "min_upright",
 }
 _TRAINING_GATE_KEYS = {
@@ -65,8 +66,10 @@ _TRAINING_GATE_KEYS = {
     "max_wheel_slip_fraction_of_peak",
     "max_settled_wheel_slip_fraction_of_peak",
     "max_stop_speed_mps",
+    "max_cruise_speed_mae_mps",
     "max_straight_wheel_speed_difference_mps",
     "max_settled_straight_wheel_speed_difference_mps",
+    "min_cruise_speed_fraction",
     "min_forward_progress_m",
 }
 _TRAINING_INTERFACE_FIELDS = {
@@ -82,6 +85,8 @@ _TRAINING_INTERFACE_FIELDS = {
     "reset_base_height_m",
 }
 _WARM_START_FIELDS = {
+    "version",
+    "policy_architecture",
     "observation_shape",
     "observation_dtype",
     "observation_breakdown",
@@ -97,6 +102,7 @@ class Course:
     stages: dict[str, dict[str, Any]]
     order: tuple[str, ...]
     ppo: dict[str, Any]
+    speed_ppo: dict[str, Any]
     reward_defaults: dict[str, Any]
     reward_penalties: dict[str, float]
     randomization: dict[str, float]
@@ -169,6 +175,7 @@ def load_course() -> Course:
         stages=stages,
         order=order,
         ppo=base["ppo"],
+        speed_ppo=speed["ppo"],
         reward_defaults=base["reward_defaults"],
         reward_penalties=base["reward_defaults"]["common_penalties"],
         randomization=base["randomization"],
@@ -339,7 +346,12 @@ def gate_score(metrics: dict[str, float | bool], gate: dict[str, Any]) -> dict[s
             "min_forward_progress_m",
             "require_finish",
         ),
-        "tracking": mean("max_speed_mae_mps", "max_yaw_mae_rad_s"),
+        "tracking": mean(
+            "max_speed_mae_mps",
+            "max_cruise_speed_mae_mps",
+            "min_cruise_speed_fraction",
+            "max_yaw_mae_rad_s",
+        ),
         "stability": mean(
             "min_upright",
             "mean_height_tolerance_m",
@@ -423,7 +435,8 @@ def sha256(path: Path) -> str:
 def stage_training_contract(course: Course, stage_name: str) -> dict[str, Any]:
     """Return a stable fingerprint of only what the current stage consumes."""
     stage = course.stage(stage_name)
-    ppo = dict(course.ppo)
+    speed_stage = stage_name.startswith("flat_motion_") and stage_name != "flat_motion"
+    ppo = dict(course.speed_ppo if speed_stage else course.ppo)
     ppo.update(stage.get("ppo", {}))
     reward_defaults = reward_defaults_for_stage(course, stage_name)
     reward_defaults.pop("evaluation_grace_s", None)
@@ -462,6 +475,7 @@ def stage_training_contract(course: Course, stage_name: str) -> dict[str, Any]:
             for path in (
                 PACKAGE_DIR / "model.py",
                 PACKAGE_DIR / "control.py",
+                PACKAGE_DIR / "policies.py",
                 PACKAGE_DIR / "mjlab_tasks.py",
                 PACKAGE_DIR / "upstream.lock.json",
             )
@@ -478,8 +492,9 @@ def stage_training_contract(course: Course, stage_name: str) -> dict[str, Any]:
 
 def policy_interface_contract(course: Course) -> dict[str, Any]:
     return {
-        "version": 8,
+        "version": 9,
         "backend": "mjlab-rsl-rl",
+        "policy_architecture": "temporal_residual_v1",
         "mjlab": "1.6.0",
         "mujoco": "3.11.x",
         "observation_shape": OBSERVATION_SHAPE[0],
@@ -516,6 +531,7 @@ def interface_contract(course: Course) -> dict[str, Any]:
                 for path in (
                     PACKAGE_DIR / "model.py",
                     PACKAGE_DIR / "control.py",
+                    PACKAGE_DIR / "policies.py",
                     PACKAGE_DIR / "mjlab_tasks.py",
                     PACKAGE_DIR / "upstream.lock.json",
                     CURRICULUM_PATH,

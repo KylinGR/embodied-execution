@@ -11,6 +11,8 @@ import tempfile
 import tomllib
 import unittest
 
+import torch
+
 from diablo_training.contract import (
     ACTION_DTYPE,
     ACTION_SHAPE,
@@ -44,6 +46,7 @@ try:
     import numpy as np
 
     from diablo_training.control import decode_action, radial_feedforward
+    from diablo_training.control import wheel_command_targets
     from diablo_training.env import Config, DiabloEnv, command_profile
     from diablo_training.model import (
         DEFAULT_Q,
@@ -202,10 +205,18 @@ class ContractTests(unittest.TestCase):
             source,
         )
         self.assertIn("stopping & stop_metric_active", source)
-        self.assertIn("wheel_velocity_feedforward_gain", source)
+        self.assertIn("wheel_command_targets(", source)
+        self.assertIn("wheel_residual_scale_rad_s", source)
+        self.assertIn("wheel_yaw_feedforward_gain", source)
         self.assertIn('get_command("course")', source)
-        self.assertIn("/ WHEEL_RADIUS\n        ).unsqueeze(1)", source)
+        self.assertIn("residual_scale_rad_s=self.cfg.wheel_residual_scale_rad_s", source)
         self.assertIn("underspeed_cost = torch.where(", source)
+        self.assertIn("overspeed_error = torch.clamp(", source)
+        self.assertIn("overspeed_cost = torch.where(", source)
+        self.assertIn(
+            "cmd[:, 0].abs() * (1.0 + overspeed_margin_fraction)",
+            source,
+        )
         self.assertIn("standing_wheel_sync_cost = torch.where(", source)
         self.assertIn("standing_wheel_action_cost = torch.where(", source)
         self.assertIn("startup_wheel_action_cost = torch.where(", source)
@@ -231,6 +242,11 @@ class ContractTests(unittest.TestCase):
             '- float(w.get("underspeed_cost", 0.0)) * underspeed_cost',
             source,
         )
+        self.assertIn(
+            '- float(w.get("overspeed", 0.0)) * overspeed_cost',
+            source,
+        )
+        self.assertIn("Metrics/overspeed_cost", source)
         self.assertIn(
             '- float(w.get("standing_wheel_sync", 0.0))',
             source,
@@ -299,15 +315,23 @@ class ContractTests(unittest.TestCase):
             "Metrics/straight_heading_error_{profile_name}_deg",
             source,
         )
+        self.assertIn('"cruise_speed_mae_mps"', source)
+        self.assertIn('"left_wheel_target_rad_s"', source)
         self.assertIn("command_term.target_heading", source)
         self.assertIn("command_observation = torch.stack(", source)
         self.assertIn("HEADING_ERROR_OBS_SCALE", source)
         self.assertIn('"reset_heading_range_deg"', source)
         self.assertIn('stage.get("observation_noise", 0.02)', source)
         self.assertIn('schedule="adaptive"', source)
-        self.assertIn('ppo.get("actor_activation", "elu")', source)
-        self.assertIn('ppo.get("actor_obs_normalization", True)', source)
+        self.assertIn("POLICY_CLASS", source)
+        self.assertEqual(source.count("class_name=POLICY_CLASS"), 2)
+        self.assertIn('"init_std": 0.3', source)
+        self.assertIn("COURSE.speed_ppo", source)
+        self.assertIn("runner_cls=XingtianOnPolicyRunner", source)
+        self.assertIn('"obs": {0: "batch"}', source)
         self.assertIn("def create_actor_initial_checkpoint(", source)
+        self.assertNotIn("load_actor_bundle(source)", source)
+        self.assertIn('"critic": False', source)
         self.assertIn("hold_settle_time_s", source)
         self.assertIn(
             "self.defaults = reward_defaults_for_stage(COURSE, self.stage_name)",
@@ -453,6 +477,14 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "action_order"):
             verify_warm_start_contract(previous)
 
+    def test_warm_start_rejects_legacy_policy_architecture(self):
+        contract = interface_contract(load_course())
+        previous = copy.deepcopy(contract)
+        previous["policy_architecture"] = "legacy_mlp_v1"
+        seal_contract(previous)
+        with self.assertRaisesRegex(ValueError, "policy_architecture"):
+            verify_warm_start_contract(previous)
+
     def test_robot_physics_uses_original_main_branch_cad_baseline(self):
         root = Path(__file__).resolve().parents[1]
         source = (root / "diablo_training" / "model.py").read_text(
@@ -485,6 +517,10 @@ class ContractTests(unittest.TestCase):
         for filename in ("curriculum.json", "flat_motion_speed_stages.json"):
             source = json.loads((root / filename).read_text(encoding="utf-8"))
             self.assertFalse(removed & set(source["ppo"]), filename)
+        speed_source = json.loads(
+            (root / "flat_motion_speed_stages.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(load_course().speed_ppo, speed_source["ppo"])
 
     def test_course_order_and_seed_sets(self):
         course = load_course()
@@ -589,23 +625,23 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(motion_010["termination_tilt_deg"], 12.0)
         self.assertEqual(motion_010["hold_settle_time_s"], 0.5)
         self.assertEqual(motion_010["overrides"]["fall"], 40.0)
-        self.assertEqual(motion_010["ppo"]["learning_rate"], 0.0001)
-        self.assertEqual(motion_010["ppo"]["n_epochs"], 3)
-        self.assertEqual(motion_010["ppo"]["ent_coef"], 0.002)
-        self.assertEqual(motion_010["ppo"]["target_kl"], 0.02)
+        self.assertEqual(motion_010["ppo"]["learning_rate"], 0.0003)
+        self.assertEqual(motion_010["ppo"]["n_epochs"], 4)
+        self.assertEqual(motion_010["ppo"]["ent_coef"], 0.006)
+        self.assertEqual(motion_010["ppo"]["target_kl"], 0.015)
         self.assertEqual(
             motion_010["control"]["wheel_speed_target_max_rad_s"],
             2.0,
         )
-        self.assertEqual(motion_010["reward_weights"]["pitch"], 2.0)
-        self.assertEqual(motion_010["reward_weights"]["upright"], 2.0)
+        self.assertEqual(motion_010["reward_weights"]["pitch"], 2.2)
+        self.assertEqual(motion_010["reward_weights"]["upright"], 2.2)
         self.assertEqual(motion_010["reward_weights"]["drift"], 1.5)
         self.assertEqual(motion_010["reward_weights"]["yaw"], 1.2)
         self.assertEqual(motion_010["overrides"]["action_rate"], 0.04)
-        self.assertEqual(motion_010["overrides"]["wheel_alignment"], 1.5)
+        self.assertEqual(motion_010["overrides"]["wheel_alignment"], 1.2)
         self.assertEqual(
             motion_010["reward_defaults"]["yaw_tolerance_base_rad_s"],
-            0.01,
+            0.03,
         )
         self.assertEqual(
             motion_010["control"]["wheel_target_slew_rad_s2"],
@@ -616,16 +652,16 @@ class ContractTests(unittest.TestCase):
             0.1,
         )
         self.assertNotIn("pitch_weight", motion_010["reward_defaults"])
-        self.assertEqual(motion_010["gate"]["max_backslide_mps"], 0.05)
+        self.assertEqual(motion_010["gate"]["max_backslide_mps"], 0.06)
         self.assertEqual(motion_010["gate"]["max_hold_drift_after_0.5s_m"], 0.02)
         self.assertEqual(
             motion_010["gate"]["max_heading_drift_after_0.5s_deg"],
             2.0,
         )
         self.assertEqual(motion_010["gate"]["max_final_speed_mps"], 0.02)
-        self.assertEqual(motion_010["gate"]["max_speed_mae_mps"], 0.02)
-        self.assertEqual(motion_010["gate"]["max_yaw_mae_rad_s"], 0.02)
-        self.assertEqual(motion_010["gate"]["max_cross_track_error_m"], 0.03)
+        self.assertEqual(motion_010["gate"]["max_speed_mae_mps"], 0.03)
+        self.assertEqual(motion_010["gate"]["max_yaw_mae_rad_s"], 0.08)
+        self.assertEqual(motion_010["gate"]["max_cross_track_error_m"], 0.05)
         self.assertEqual(
             motion_010["gate"]["max_mean_steady_wheel_slip_mps"],
             0.02,
@@ -652,14 +688,17 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(motion_020["termination_tilt_deg"], 12.0)
         self.assertEqual(motion_020["hold_settle_time_s"], 0.5)
         self.assertEqual(motion_020["overrides"]["fall"], 40.0)
-        self.assertEqual(motion_020["overrides"]["action_rate"], 0.035)
-        self.assertEqual(motion_020["overrides"]["wheel_alignment"], 1.5)
-        self.assertEqual(motion_020["ppo"]["learning_rate"], 0.0001)
-        self.assertEqual(motion_020["ppo"]["n_epochs"], 3)
-        self.assertEqual(motion_020["ppo"]["ent_coef"], 0.003)
-        self.assertEqual(motion_020["ppo"]["target_kl"], 0.02)
+        self.assertEqual(motion_020["overrides"]["action_rate"], 0.04)
+        self.assertEqual(motion_020["overrides"]["wheel_alignment"], 1.2)
+        self.assertEqual(motion_020["ppo"]["learning_rate"], 0.0003)
+        self.assertEqual(motion_020["ppo"]["n_epochs"], 4)
+        self.assertEqual(motion_020["ppo"]["ent_coef"], 0.006)
+        self.assertEqual(motion_020["ppo"]["target_kl"], 0.015)
         self.assertNotIn("pitch_weight", motion_020["reward_defaults"])
-        self.assertEqual(motion_020["reward_weights"]["speed"], 2.5)
+        self.assertEqual(motion_020["reward_weights"]["speed"], 3.0)
+        self.assertEqual(motion_020["reward_weights"]["underspeed"], 1.2)
+        self.assertEqual(motion_020["reward_weights"]["underspeed_cost"], 0.6)
+        self.assertEqual(motion_020["reward_weights"]["backslide"], 0.3)
         self.assertEqual(motion_020["reward_weights"]["yaw"], 1.2)
         self.assertEqual(motion_020["reward_weights"]["straight_heading"], 1.2)
         self.assertEqual(motion_020["reward_weights"]["cross_track"], 1.2)
@@ -668,54 +707,54 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(motion_020["reward_weights"]["drift"], 1.5)
         self.assertEqual(motion_020["reward_weights"]["wheel_slip_gate"], 1.0)
         self.assertEqual(motion_020["reward_weights"]["stop_speed_gate"], 0.5)
-        self.assertEqual(motion_020["reward_weights"]["wheel_sync_gate"], 1.5)
+        self.assertEqual(motion_020["reward_weights"]["wheel_sync_gate"], 1.0)
         self.assertEqual(motion_020["reward_weights"]["wheel_chatter"], 0.75)
         self.assertEqual(motion_040["termination_tilt_deg"], 12.0)
         self.assertEqual(motion_040["hold_settle_time_s"], 0.5)
-        self.assertEqual(motion_120["termination_tilt_deg"], 20.0)
+        self.assertEqual(motion_120["termination_tilt_deg"], 18.0)
         self.assertEqual(motion_120["hold_settle_time_s"], 0.5)
-        self.assertEqual(motion_120["ppo"]["learning_rate"], 0.00005)
-        self.assertEqual(motion_120["ppo"]["ent_coef"], 0.003)
-        self.assertEqual(motion_120["ppo"]["actor_activation"], "tanh")
-        self.assertFalse(motion_120["ppo"]["actor_obs_normalization"])
-        self.assertEqual(motion_120["reward_weights"]["speed"], 2.5)
-        self.assertEqual(motion_120["reward_weights"]["underspeed"], 1.0)
-        self.assertEqual(motion_120["reward_weights"]["underspeed_cost"], 0.4)
-        self.assertEqual(motion_120["overrides"]["fall"], 20.0)
-        self.assertEqual(motion_120["reward_weights"]["straight_heading"], 1.2)
-        self.assertEqual(motion_120["reward_weights"]["cross_track"], 1.2)
-        self.assertEqual(motion_120["gate"]["max_backslide_mps"], 0.12)
-        self.assertEqual(motion_120["gate"]["max_hold_drift_after_0.5s_m"], 0.03)
+        self.assertEqual(motion_120["ppo"]["learning_rate"], 0.00015)
+        self.assertEqual(motion_120["ppo"]["ent_coef"], 0.0045)
+        self.assertNotIn("actor_activation", motion_120["ppo"])
+        self.assertNotIn("actor_obs_normalization", motion_120["ppo"])
+        self.assertEqual(motion_120["reward_weights"]["speed"], 3.7)
+        self.assertEqual(motion_120["reward_weights"]["underspeed"], 1.1)
+        self.assertEqual(motion_120["reward_weights"]["underspeed_cost"], 0.5)
+        self.assertEqual(motion_120["overrides"]["fall"], 30.0)
+        self.assertEqual(motion_120["reward_weights"]["straight_heading"], 0.75)
+        self.assertEqual(motion_120["reward_weights"]["cross_track"], 0.75)
+        self.assertEqual(motion_120["gate"]["max_backslide_mps"], 0.22)
+        self.assertEqual(motion_120["gate"]["max_hold_drift_after_0.5s_m"], 0.032)
         self.assertNotIn("max_hold_drift_m", motion_120["gate"])
         motion_100 = course.stage("flat_motion_100")
-        self.assertEqual(motion_100["termination_tilt_deg"], 20.0)
+        self.assertEqual(motion_100["termination_tilt_deg"], 18.0)
         self.assertEqual(motion_100["reward_weights"]["underspeed"], 1.0)
         self.assertEqual(motion_100["reward_weights"]["underspeed_cost"], 0.4)
         self.assertEqual(motion_100["reward_defaults"]["underspeed_cost_limit"], 1.0)
-        self.assertEqual(motion_100["reward_weights"]["speed"], 2.8)
-        self.assertEqual(motion_100["reward_weights"]["upright"], 1.2)
-        self.assertEqual(motion_100["reward_weights"]["pitch"], 0.8)
-        self.assertEqual(motion_100["overrides"]["fall"], 20.0)
-        self.assertEqual(motion_100["ppo"]["ent_coef"], 0.003)
-        self.assertEqual(motion_100["ppo"]["actor_activation"], "tanh")
-        self.assertFalse(motion_100["ppo"]["actor_obs_normalization"])
+        self.assertEqual(motion_100["reward_weights"]["speed"], 3.6)
+        self.assertEqual(motion_100["reward_weights"]["upright"], 1.1)
+        self.assertEqual(motion_100["reward_weights"]["pitch"], 0.9)
+        self.assertEqual(motion_100["overrides"]["fall"], 30.0)
+        self.assertEqual(motion_100["ppo"]["ent_coef"], 0.005)
+        self.assertNotIn("actor_activation", motion_100["ppo"])
+        self.assertNotIn("actor_obs_normalization", motion_100["ppo"])
         self.assertEqual(motion_030["limits"]["forward"], 0.3)
         self.assertEqual(motion_030["termination_tilt_deg"], 12.0)
         self.assertEqual(motion_030["hold_settle_time_s"], 0.5)
-        self.assertEqual(motion_030["reward_weights"]["speed"], 2.8)
-        self.assertEqual(motion_030["reward_weights"]["underspeed"], 1.0)
-        self.assertEqual(motion_030["reward_weights"]["underspeed_cost"], 0.4)
+        self.assertEqual(motion_030["reward_weights"]["speed"], 3.2)
+        self.assertEqual(motion_030["reward_weights"]["underspeed"], 1.1)
+        self.assertEqual(motion_030["reward_weights"]["underspeed_cost"], 0.55)
         self.assertEqual(motion_030["reward_weights"]["standing_wheel_sync"], 1.0)
         self.assertEqual(motion_030["reward_weights"]["standing_wheel_action"], 0.8)
         self.assertEqual(motion_030["reward_weights"]["startup_wheel_action"], 4.0)
         self.assertEqual(motion_030["reward_weights"]["settled_wheel_action"], 1.0)
         self.assertEqual(motion_030["reward_weights"]["settled_drift"], 2.0)
-        self.assertEqual(motion_030["reward_weights"]["roll"], 1.5)
-        self.assertEqual(motion_030["reward_weights"]["angular_xy"], 0.6)
-        self.assertEqual(motion_030["reward_weights"]["upright"], 2.2)
-        self.assertEqual(motion_030["reward_weights"]["pitch"], 2.4)
-        self.assertEqual(motion_030["reward_weights"]["stop_speed_gate"], 1.5)
-        self.assertEqual(motion_030["reward_weights"]["zero_speed"], 2.0)
+        self.assertEqual(motion_030["reward_weights"]["roll"], 0.5)
+        self.assertEqual(motion_030["reward_weights"]["angular_xy"], 0.2)
+        self.assertEqual(motion_030["reward_weights"]["upright"], 2.0)
+        self.assertEqual(motion_030["reward_weights"]["pitch"], 2.0)
+        self.assertEqual(motion_030["reward_weights"]["stop_speed_gate"], 0.5)
+        self.assertEqual(motion_030["reward_weights"]["zero_speed"], 1.5)
         self.assertEqual(motion_030["reward_weights"]["braking"], 0.3)
         self.assertEqual(motion_030["reward_defaults"]["startup_window_s"], 0.2)
         self.assertEqual(
@@ -724,7 +763,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             motion_030["control"]["wheel_velocity_feedforward_gain"],
-            0.5,
+            1.0,
         )
         self.assertEqual(
             motion_030["control"]["standing_wheel_target_cap_rad_s"],
@@ -738,46 +777,46 @@ class ContractTests(unittest.TestCase):
             motion_030["control"]["wheel_target_slew_rad_s2"],
             10.0,
         )
-        self.assertEqual(motion_030["gate"]["max_speed_mae_mps"], 0.12)
+        self.assertEqual(motion_030["gate"]["max_speed_mae_mps"], 0.06)
         self.assertEqual(motion_030["gate"]["min_upright"], 0.93)
-        self.assertEqual(motion_030["gate"]["max_stop_speed_mps"], 0.012)
+        self.assertEqual(motion_030["gate"]["max_stop_speed_mps"], 0.017)
         self.assertEqual(
             motion_030["gate"][
                 "max_settled_straight_wheel_speed_difference_mps"
             ],
-            0.04,
+            0.06,
         )
-        self.assertEqual(motion_040["reward_weights"]["speed"], 3.0)
+        self.assertEqual(motion_040["reward_weights"]["speed"], 3.3)
         self.assertEqual(motion_040["reward_weights"]["underspeed"], 1.0)
-        self.assertEqual(motion_040["reward_weights"]["underspeed_cost"], 0.4)
+        self.assertEqual(motion_040["reward_weights"]["underspeed_cost"], 0.5)
         self.assertEqual(motion_040["reward_weights"]["standing_wheel_sync"], 1.0)
         self.assertEqual(motion_040["reward_weights"]["standing_wheel_action"], 0.8)
         self.assertEqual(motion_040["reward_weights"]["startup_wheel_action"], 4.0)
         self.assertEqual(motion_040["reward_weights"]["settled_wheel_action"], 1.0)
         self.assertEqual(motion_040["reward_weights"]["settled_drift"], 2.0)
-        self.assertEqual(motion_040["reward_weights"]["roll"], 1.5)
-        self.assertEqual(motion_040["reward_weights"]["angular_xy"], 0.6)
-        self.assertEqual(motion_040["reward_weights"]["stop_speed_gate"], 2.0)
-        self.assertEqual(motion_040["reward_weights"]["zero_speed"], 2.2)
+        self.assertEqual(motion_040["reward_weights"]["roll"], 0.5)
+        self.assertEqual(motion_040["reward_weights"]["angular_xy"], 0.2)
+        self.assertEqual(motion_040["reward_weights"]["stop_speed_gate"], 0.5)
+        self.assertEqual(motion_040["reward_weights"]["zero_speed"], 1.5)
         self.assertEqual(motion_040["reward_weights"]["braking"], 0.3)
         self.assertEqual(motion_040["reward_defaults"]["startup_window_s"], 0.2)
         self.assertEqual(
             motion_040["control"]["wheel_velocity_feedforward_gain"],
-            0.5,
+            1.0,
         )
         self.assertEqual(
             motion_040["control"]["zero_wheel_after_hold_s"],
             0.5,
         )
-        self.assertEqual(motion_040["reward_weights"]["upright"], 2.0)
-        self.assertEqual(motion_040["reward_weights"]["pitch"], 2.0)
+        self.assertEqual(motion_040["reward_weights"]["upright"], 1.9)
+        self.assertEqual(motion_040["reward_weights"]["pitch"], 1.9)
         self.assertEqual(motion_040["reward_weights"]["drift"], 1.5)
         self.assertEqual(motion_040["overrides"]["fall"], 40.0)
-        self.assertEqual(motion_040["overrides"]["action_rate"], 0.035)
-        self.assertEqual(motion_040["overrides"]["wheel_alignment"], 1.5)
-        self.assertEqual(motion_040["ppo"]["learning_rate"], 0.0001)
-        self.assertEqual(motion_040["ppo"]["n_epochs"], 3)
-        self.assertEqual(motion_040["ppo"]["ent_coef"], 0.003)
+        self.assertEqual(motion_040["overrides"]["action_rate"], 0.04)
+        self.assertEqual(motion_040["overrides"]["wheel_alignment"], 1.2)
+        self.assertEqual(motion_040["ppo"]["learning_rate"], 0.00025)
+        self.assertEqual(motion_040["ppo"]["n_epochs"], 4)
+        self.assertEqual(motion_040["ppo"]["ent_coef"], 0.006)
         self.assertEqual(
             motion_040["control"]["wheel_speed_target_max_rad_s"],
             8.0,
@@ -786,10 +825,10 @@ class ContractTests(unittest.TestCase):
             motion_040["control"]["wheel_target_slew_rad_s2"],
             12.0,
         )
-        self.assertEqual(motion_040["gate"]["max_speed_mae_fraction_of_peak"], 0.15)
-        self.assertEqual(motion_040["gate"]["min_upright"], 0.93)
-        self.assertEqual(motion_040["gate"]["max_yaw_mae_rad_s"], 0.02)
-        self.assertEqual(motion_040["gate"]["max_backslide_mps"], 0.08)
+        self.assertEqual(motion_040["gate"]["max_speed_mae_fraction_of_peak"], 0.25)
+        self.assertEqual(motion_040["gate"]["min_upright"], 0.92)
+        self.assertEqual(motion_040["gate"]["max_yaw_mae_rad_s"], 0.08)
+        self.assertEqual(motion_040["gate"]["max_backslide_mps"], 0.12)
         self.assertEqual(
             motion_040["gate"]["max_transient_wheel_slip_mps"],
             0.12,
@@ -798,12 +837,12 @@ class ContractTests(unittest.TestCase):
             motion_040["gate"][
                 "max_settled_straight_wheel_speed_difference_mps"
             ],
-            0.04,
+            0.07,
         )
         self.assertNotIn("max_hold_drift_m", motion_040["gate"])
         self.assertEqual(
             motion_020["reward_defaults"]["yaw_tolerance_base_rad_s"],
-            0.01,
+            0.035,
         )
         self.assertEqual(
             motion_020["reward_defaults"]["straight_heading_tolerance_rad"],
@@ -814,8 +853,16 @@ class ContractTests(unittest.TestCase):
             0.98,
         )
         self.assertEqual(motion_020["gate"]["max_backslide_mps"], 0.08)
-        self.assertEqual(motion_020["gate"]["max_yaw_mae_rad_s"], 0.02)
-        self.assertEqual(motion_020["gate"]["max_final_speed_mps"], 0.03)
+        self.assertEqual(
+            motion_020["gate"]["max_cruise_speed_mae_mps"],
+            0.03,
+        )
+        self.assertEqual(
+            motion_020["gate"]["min_cruise_speed_fraction"],
+            0.85,
+        )
+        self.assertEqual(motion_020["gate"]["max_yaw_mae_rad_s"], 0.08)
+        self.assertEqual(motion_020["gate"]["max_final_speed_mps"], 0.025)
         self.assertEqual(motion_020["gate"]["max_hold_drift_after_0.5s_m"], 0.02)
         self.assertNotIn("max_hold_drift_m", motion_020["gate"])
         self.assertEqual(
@@ -826,46 +873,6 @@ class ContractTests(unittest.TestCase):
             motion_020["control"]["wheel_target_slew_rad_s2"],
             8.0,
         )
-        for stage_name in (
-            name
-            for name in course.order
-            if name.startswith("flat_motion_") and name != "flat_motion_010"
-        ):
-            with self.subTest(stage=stage_name):
-                stage = course.stage(stage_name)
-                self.assertEqual(
-                    stage["control"]["wheel_velocity_feedforward_gain"],
-                    0.5,
-                )
-                self.assertEqual(
-                    stage["control"]["standing_wheel_target_cap_rad_s"],
-                    0.2,
-                )
-                self.assertEqual(
-                    stage["control"]["zero_wheel_after_hold_s"],
-                    0.5,
-                )
-                self.assertEqual(stage["reward_weights"]["underspeed"], 1.0)
-                self.assertEqual(
-                    stage["reward_weights"]["underspeed_cost"],
-                    0.4,
-                )
-                self.assertEqual(
-                    stage["reward_weights"]["standing_wheel_sync"],
-                    1.0,
-                )
-                self.assertEqual(
-                    stage["reward_weights"]["standing_wheel_action"],
-                    0.8,
-                )
-                self.assertEqual(
-                    stage["reward_weights"]["settled_wheel_action"],
-                    1.0,
-                )
-                self.assertEqual(
-                    stage["reward_weights"]["settled_drift"],
-                    2.0,
-                )
         self.assertEqual(SCREEN_SEEDS, (2001, 2002, 2003))
         self.assertEqual(VERIFY_SEEDS, (2004, 2005, 2006, 2007, 2008))
         self.assertEqual(SELECTION_PROBE_SEED, 2001)
@@ -884,6 +891,7 @@ class ContractTests(unittest.TestCase):
             {
                 "model.py",
                 "control.py",
+                "policies.py",
                 "mjlab_tasks.py",
                 "upstream.lock.json",
                 "curriculum.json",
@@ -912,7 +920,11 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "action_order"):
             verify_interface_contract(incompatible)
         self.assertEqual(contract["observation_shape"], 125)
-        self.assertEqual(contract["version"], 8)
+        self.assertEqual(contract["version"], 9)
+        self.assertEqual(
+            contract["policy_architecture"],
+            "temporal_residual_v1",
+        )
         self.assertEqual(contract["observation_dtype"], "float32")
         self.assertEqual(
             contract["observation_breakdown"],
@@ -939,28 +951,226 @@ class ContractTests(unittest.TestCase):
                 "flat_balance",
             )
 
+    def test_motion_speed_curriculum_is_smooth_and_complete(self):
+        course = load_course()
+        names = tuple(
+            name
+            for name in course.order
+            if name.startswith("flat_motion_") and name != "flat_motion"
+        )
+        stages = [course.stage(name) for name in names]
+        expected_gate = {
+            "min_pass_rate",
+            "min_duration_fraction",
+            "max_speed_mae_mps",
+            "max_speed_mae_fraction_of_peak",
+            "max_cruise_speed_mae_mps",
+            "min_cruise_speed_fraction",
+            "min_planned_peak_progress_fraction",
+            "max_backslide_mps",
+            "max_yaw_mae_rad_s",
+            "min_upright",
+            "max_mean_abs_pitch_deg",
+            "max_pitch_deg",
+            "max_mean_abs_steady_pitch_deg",
+            "max_mean_abs_roll_deg",
+            "max_roll_deg",
+            "max_final_heading_error_deg",
+            "max_heading_drift_after_0.5s_deg",
+            "max_cross_track_error_m",
+            "max_settled_mean_height_error_m",
+            "max_settled_height_deviation_m",
+            "max_mean_steady_wheel_slip_mps",
+            "max_transient_wheel_slip_mps",
+            "max_stop_speed_mps",
+            "max_stop_speed_fraction_of_peak",
+            "max_final_speed_mps",
+            "max_hold_drift_after_0.5s_m",
+            "max_wheel_center_offset_m",
+            "max_settled_straight_wheel_speed_difference_mps",
+        }
+        expected_weights = {
+            "speed",
+            "underspeed",
+            "underspeed_cost",
+            "overspeed",
+            "yaw",
+            "straight_heading",
+            "cross_track",
+            "wheel_slip_gate",
+            "stop_speed_gate",
+            "wheel_sync_gate",
+            "wheel_chatter",
+            "height",
+            "upright",
+            "pitch",
+            "roll",
+            "stationary",
+            "drift",
+            "zero_speed",
+            "acceleration",
+            "wheel_slip",
+            "in_place",
+            "vertical_velocity",
+            "angular_xy",
+            "braking",
+            "backslide",
+            "over_rated",
+            "power",
+            "standing_wheel_sync",
+            "standing_wheel_action",
+            "startup_wheel_action",
+            "settled_wheel_action",
+            "settled_drift",
+        }
+        for stage in stages:
+            self.assertEqual(set(stage["gate"]), expected_gate)
+            self.assertEqual(set(stage["reward_weights"]), expected_weights)
+            self.assertEqual(
+                stage["control"].get("wheel_velocity_feedforward_gain", 1.0),
+                1.0,
+            )
+            self.assertEqual(
+                stage["control"]["standing_wheel_target_cap_rad_s"],
+                0.2,
+            )
+            self.assertEqual(
+                stage["control"]["zero_wheel_after_hold_s"],
+                0.5,
+            )
+        self.assertEqual(
+            reward_defaults_for_stage(course, names[0])[
+                "overspeed_margin_fraction"
+            ],
+            0.05,
+        )
+
+        def nondecreasing(path):
+            values = []
+            for stage in stages:
+                value = stage
+                for key in path:
+                    value = value[key]
+                values.append(float(value))
+            self.assertEqual(values, sorted(values))
+
+        def nonincreasing(path):
+            values = []
+            for stage in stages:
+                value = stage
+                for key in path:
+                    value = value[key]
+                values.append(float(value))
+            self.assertEqual(values, sorted(values, reverse=True))
+
+        for key in (
+            "max_speed_mae_mps",
+            "max_cruise_speed_mae_mps",
+            "max_backslide_mps",
+            "max_yaw_mae_rad_s",
+            "max_mean_abs_pitch_deg",
+            "max_mean_abs_roll_deg",
+            "max_final_heading_error_deg",
+            "max_heading_drift_after_0.5s_deg",
+            "max_cross_track_error_m",
+            "max_settled_mean_height_error_m",
+            "max_mean_steady_wheel_slip_mps",
+            "max_stop_speed_mps",
+            "max_final_speed_mps",
+            "max_hold_drift_after_0.5s_m",
+            "max_wheel_center_offset_m",
+            "max_settled_straight_wheel_speed_difference_mps",
+        ):
+            nondecreasing(("gate", key))
+        nonincreasing(("gate", "min_upright"))
+        nondecreasing(("termination_tilt_deg",))
+        nondecreasing(("control", "wheel_speed_target_max_rad_s"))
+        nondecreasing(("control", "wheel_target_slew_rad_s2"))
+        nondecreasing(("overrides", "action_rate"))
+        nonincreasing(("overrides", "fall"))
+        nonincreasing(("overrides", "wheel_alignment"))
+        for key in (
+            "speed_tolerance_base_mps",
+            "yaw_tolerance_base_rad_s",
+            "height_tolerance_m",
+            "pitch_tolerance_rad",
+            "wheel_slip_tolerance_mps",
+            "acceleration_tolerance_mps2",
+            "zero_speed_tolerance_mps",
+            "drift_tolerance_m",
+            "wheel_sync_tolerance_mps",
+        ):
+            nondecreasing(("reward_defaults", key))
+        for key in ("speed",):
+            nondecreasing(("reward_weights", key))
+        for stage in stages:
+            self.assertGreater(stage["reward_weights"]["underspeed"], 0.0)
+            self.assertGreater(
+                stage["reward_weights"]["underspeed_cost"],
+                0.0,
+            )
+            self.assertEqual(stage["reward_weights"]["overspeed"], 0.8)
+        self.assertEqual(
+            course.stage("flat_motion")["reward_weights"]["overspeed"],
+            0.8,
+        )
+        for key in (
+            "height",
+            "upright",
+            "pitch",
+            "straight_heading",
+            "cross_track",
+        ):
+            nonincreasing(("reward_weights", key))
+
+        effective_ppo = []
+        for stage in stages:
+            ppo = dict(course.speed_ppo)
+            ppo.update(stage["ppo"])
+            effective_ppo.append(ppo)
+            self.assertEqual(ppo["n_epochs"], 4)
+            self.assertEqual(ppo["gamma"], 0.99)
+            self.assertEqual(ppo["gae_lambda"], 0.95)
+            self.assertEqual(ppo["max_grad_norm"], 0.8)
+            self.assertEqual(ppo["clip_range"], 0.2)
+            self.assertEqual(ppo["vf_coef"], 0.5)
+        self.assertEqual(
+            [float(ppo["learning_rate"]) for ppo in effective_ppo],
+            sorted(
+                (float(ppo["learning_rate"]) for ppo in effective_ppo),
+                reverse=True,
+            ),
+        )
+        self.assertEqual(
+            [float(ppo["ent_coef"]) for ppo in effective_ppo],
+            sorted(
+                (float(ppo["ent_coef"]) for ppo in effective_ppo),
+                reverse=True,
+            ),
+        )
+
     def test_speed_stage_yaw_and_wheel_slip_calibration(self):
         course = load_course()
         expected_slip = {
-            "flat_motion_010": (0.02, 0.05),
-            "flat_motion_020": (0.025, 0.08),
-            "flat_motion_030": (0.03, 0.1),
-            "flat_motion_040": (0.04, 0.12),
-            "flat_motion_060": (0.05, 0.12),
-            "flat_motion_080": (0.05, 0.12),
-            "flat_motion_100": (0.05, 0.12),
-            "flat_motion_120": (0.05, 0.12),
-            "flat_motion_140": (0.05, 0.12),
-            "flat_motion_160": (0.05, 0.12),
-            "flat_motion_180": (0.05, 0.12),
-            "flat_motion_200": (0.05, 0.12),
+            "flat_motion_010": (0.08, 0.03, 0.02, 0.05),
+            "flat_motion_020": (0.08, 0.035, 0.025, 0.08),
+            "flat_motion_030": (0.08, 0.04, 0.03, 0.10),
+            "flat_motion_040": (0.08, 0.05, 0.035, 0.12),
+            "flat_motion_060": (0.09, 0.06, 0.04, 0.14),
+            "flat_motion_080": (0.09, 0.07, 0.045, 0.16),
+            "flat_motion_100": (0.10, 0.08, 0.05, 0.18),
+            "flat_motion_120": (0.10, 0.09, 0.05, 0.20),
+            "flat_motion_140": (0.10, 0.10, 0.055, 0.22),
+            "flat_motion_160": (0.11, 0.11, 0.06, 0.24),
+            "flat_motion_180": (0.11, 0.12, 0.06, 0.26),
+            "flat_motion_200": (0.12, 0.12, 0.065, 0.28),
         }
-        for name, (mean_slip, max_slip) in expected_slip.items():
+        for name, (yaw_gate, yaw_tol, mean_slip, max_slip) in expected_slip.items():
             stage = course.stage(name)
-            self.assertEqual(stage["gate"]["max_yaw_mae_rad_s"], 0.02, name)
+            self.assertEqual(stage["gate"]["max_yaw_mae_rad_s"], yaw_gate, name)
             self.assertEqual(
                 stage["reward_defaults"]["yaw_tolerance_base_rad_s"],
-                0.01,
+                yaw_tol,
                 name,
             )
             self.assertEqual(
@@ -1004,15 +1214,15 @@ class ContractTests(unittest.TestCase):
             "flat_motion_010": (3.0, 0.93),
             "flat_motion_020": (3.0, 0.93),
             "flat_motion_030": (3.0, 0.93),
-            "flat_motion_040": (3.0, 0.93),
+            "flat_motion_040": (3.25, 0.92),
             "flat_motion_060": (3.25, 0.91),
-            "flat_motion_080": (3.25, 0.91),
-            "flat_motion_100": (3.25, 0.91),
-            "flat_motion_120": (3.5, 0.89),
-            "flat_motion_140": (3.5, 0.89),
-            "flat_motion_160": (3.5, 0.89),
-            "flat_motion_180": (4.0, 0.87),
-            "flat_motion_200": (4.25, 0.86),
+            "flat_motion_080": (3.5, 0.90),
+            "flat_motion_100": (3.5, 0.90),
+            "flat_motion_120": (3.75, 0.89),
+            "flat_motion_140": (3.75, 0.88),
+            "flat_motion_160": (4.0, 0.87),
+            "flat_motion_180": (4.0, 0.86),
+            "flat_motion_200": (4.25, 0.85),
         }
         for name, (mean_pitch_deg, min_upright) in expected.items():
             stage = course.stage(name)
@@ -1157,6 +1367,24 @@ class ContractTests(unittest.TestCase):
             any("transient_wheel_slip_mps" in failure for failure in failures)
         )
 
+    def test_cruise_speed_gate_is_directional_and_evaluable(self):
+        gate = {
+            "max_cruise_speed_mae_mps": 0.02,
+            "min_cruise_speed_fraction": 0.9,
+        }
+        passing = {
+            "cruise_speed_mae_mps": 0.015,
+            "cruise_speed_fraction": 0.95,
+        }
+        self.assertEqual(gate_failures(passing, gate), [])
+        self.assertTrue(gate_score(passing, gate)["passed"])
+        failing = {
+            "cruise_speed_mae_mps": 0.03,
+            "cruise_speed_fraction": 0.8,
+        }
+        self.assertEqual(len(gate_failures(failing, gate)), 2)
+        self.assertFalse(gate_score(failing, gate)["passed"])
+
     def test_bestmodel_selection_probes_one_seed_then_verifies_five(self):
         root = Path(__file__).resolve().parents[1]
         source = (root / "diablo_training" / "mjlab_tasks.py").read_text(
@@ -1255,14 +1483,14 @@ class ContractTests(unittest.TestCase):
 
     def test_terrain_requirements(self):
         course = load_course()
-        self.assertEqual(course.stage("slope")["terrain"]["grade_deg"], 35.0)
-        self.assertEqual(course.stage("rough")["terrain"]["max_grade_deg"], 35.0)
+        self.assertEqual(course.stage("slope")["terrain"]["grade_deg"], 30.0)
+        self.assertEqual(course.stage("rough")["terrain"]["max_grade_deg"], 30.0)
         obstacle = course.stage("roller_obstacle")["terrain"]
         self.assertEqual(obstacle["min_height_m"], 0.02)
         self.assertEqual(obstacle["max_height_m"], 0.05)
         self.assertEqual(set(obstacle["types"]), {"box", "cylinder", "capsule"})
         composite = course.stage("composite")["terrain"]
-        self.assertEqual(composite["max_grade_deg"], 35.0)
+        self.assertEqual(composite["max_grade_deg"], 30.0)
         self.assertEqual(composite["length_m"], 47.5)
 
     def test_gpu_training_dependency_contract(self):
@@ -1271,6 +1499,67 @@ class ContractTests(unittest.TestCase):
         dependencies = " ".join(project["project"]["dependencies"]).lower()
         self.assertNotIn("baselines", dependencies)
         self.assertIn("mjlab==1.6.0", dependencies)
+
+
+@unittest.skipUnless(
+    DEPENDENCIES_AVAILABLE, "CPU MuJoCo/Gymnasium dependencies are not installed"
+)
+class WheelMappingTests(unittest.TestCase):
+    def test_residual_wheel_target_mapping_is_symmetric(self):
+        commands = torch.tensor(
+            [
+                [0.2, 0.0, 0.35],
+                [-0.2, 0.0, 0.35],
+                [0.0, 1.0, 0.35],
+                [0.0, -1.0, 0.35],
+            ],
+            dtype=torch.float32,
+        )
+        zero = torch.zeros((4, 2), dtype=torch.float32)
+        targets = wheel_command_targets(
+            commands,
+            zero,
+            radius=0.1,
+            half_track=0.18755,
+            feedforward_gain=1.0,
+            yaw_feedforward_gain=1.0,
+            residual_scale_rad_s=4.0,
+        )
+        torch.testing.assert_close(
+            targets[:2],
+            torch.tensor([[-2.0, -2.0], [2.0, 2.0]]),
+            atol=1e-5,
+            rtol=0.0,
+        )
+        torch.testing.assert_close(
+            targets[2:],
+            torch.tensor(
+                [
+                    [1.8755, -1.8755],
+                    [-1.8755, 1.8755],
+                ]
+            ),
+            atol=1e-5,
+            rtol=0.0,
+        )
+        residual = torch.tensor(
+            [[0.25, 0.0], [-0.25, 0.0]], dtype=torch.float32
+        )
+        shifted = wheel_command_targets(
+            commands[:2],
+            residual,
+            radius=0.1,
+            half_track=0.18755,
+            feedforward_gain=1.0,
+            yaw_feedforward_gain=1.0,
+            residual_scale_rad_s=4.0,
+        )
+        torch.testing.assert_close(
+            shifted,
+            torch.tensor([[-3.0, -2.0], [3.0, 2.0]]),
+            atol=1e-5,
+            rtol=0.0,
+        )
 
 
 @unittest.skipUnless(

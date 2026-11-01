@@ -59,7 +59,8 @@
     "wheel_sync_tolerance_mps": 0.05,
     "straight_yaw_threshold_rad_s": 0.05,
     "acceleration_tolerance_mps2": 0.8,
-    "settled_heading_drift_weight": 0.75
+    "settled_heading_drift_weight": 0.75,
+    "overspeed_margin_fraction": 0.05
   },
   "randomization": {
     "friction_min": 0.65,
@@ -171,6 +172,7 @@
       ],
       "reward_weights": {
         "speed": 2.5,
+        "overspeed": 0.8,
         "yaw": 0.6,
         "height": 1.2,
         "upright": 0.4,
@@ -283,7 +285,7 @@
     },
     "slope": {
       "budget": 14000000,
-      "terrain": {"kind": "slope", "length_m": 32.0, "width_m": 4.0, "grade_deg": 35.0, "ramp_start_m": 5.0, "ramp_length_m": 8.0, "crest_length_m": 3.0},
+      "terrain": {"kind": "slope", "length_m": 32.0, "width_m": 4.0, "grade_deg": 30.0, "ramp_start_m": 5.0, "ramp_length_m": 8.0, "crest_length_m": 3.0},
       "limits": {"forward": 0.5, "backward": 0.3, "yaw": 0.5},
       "profiles": [
         {"name": "climb_and_descend", "start": "start", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.5, 0.0], [12.5, 0.5, 0.0], [14.0, 0.0, 0.0], [15.0, 0.0, 0.0], [17.0, -0.3, 0.0], [21.0, -0.3, 0.0], [23.0, 0.0, 0.0], [25.0, 0.0, 0.0]]}
@@ -322,7 +324,7 @@
     },
     "rough": {
       "budget": 16000000,
-      "terrain": {"kind": "rough", "length_m": 35.0, "width_m": 5.0, "amplitude_m": 0.04, "wavelength_min_m": 0.3, "wavelength_max_m": 1.0, "max_grade_deg": 35.0},
+      "terrain": {"kind": "rough", "length_m": 35.0, "width_m": 5.0, "amplitude_m": 0.04, "wavelength_min_m": 0.3, "wavelength_max_m": 1.0, "max_grade_deg": 30.0},
       "limits": {"forward": 0.8, "backward": 0.4, "yaw": 0.8},
       "profiles": [
         {"name": "rough_forward", "start": "start", "points": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.8, 0.0], [12.0, 0.8, 0.0], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]},
@@ -415,7 +417,7 @@
         "length_m": 47.5,
         "width_m": 5.0,
         "amplitude_m": 0.04,
-        "max_grade_deg": 35.0,
+        "max_grade_deg": 30.0,
         "ramp_start_m": 16.0,
         "ramp_length_m": 8.0,
         "crest_length_m": 4.0,

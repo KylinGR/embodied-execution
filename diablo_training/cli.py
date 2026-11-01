@@ -576,7 +576,7 @@ def main() -> int:
     train_parser.add_argument(
         "--warm-start",
         type=Path,
-        help="Start a new stage from an RSL checkpoint or actor bundle",
+        help="Start a new stage from a compatible temporal-residual RSL checkpoint",
     )
     train_parser.add_argument(
         "--transfer",
