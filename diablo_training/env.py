@@ -128,7 +128,7 @@ class DiabloEnv(gym.Env):
             (
                 gyro * 0.25,
                 self.gravity_estimate,
-                self.command * [10.0, 0.25, 5.0],
+                self.command * [10.0, 10.0, 5.0],
                 q,
                 dq * 0.05,
                 self.previous_action,
@@ -230,8 +230,43 @@ class DiabloEnv(gym.Env):
         if self.command.shape != (3,) or not np.isfinite(self.command).all():
             self._fault("Custom task command must be finite [vx, yaw_rate, height]")
         self._needs_reset = False
+        self.pitch_integral = 0.0
         self.history[:] = self._frame()
         return self.history.flatten().copy(), {"task": self.task}
+
+    def _update_pitch_control(self):
+        """俯仰积分补偿：每个控制步算一次，子步循环里叠加到两个轮子上。
+
+        符号由开环标定：两轮同时加正力矩 → 俯仰角下降，故 kp/ki 取正。
+        """
+        import os
+
+        kp = float(os.environ.get("PITCH_KP", "0.15"))
+        kd = float(os.environ.get("PITCH_KD", "0.0"))
+        ki = float(os.environ.get("PITCH_KI", "0.03"))
+        clamp = float(os.environ.get("PITCH_CLAMP", "4.0"))
+        i_limit = float(os.environ.get("PITCH_I_LIMIT", "20.0"))
+
+        gate_vx = float(os.environ.get("PITCH_GATE_VX", "0.05"))
+        if abs(float(self.command[0])) >= gate_vx:
+            # 在行驶：前倾是加速手段，不能补偿；积分冻结
+            self._pitch_bias = np.zeros(6)
+            return
+        rot = np.asarray(self.data.xmat[self.base_id]).reshape(3, 3)
+        pitch = float(np.degrees(np.arctan2(-rot[2, 0], rot[2, 2])))
+        rate = float(self.data.sensor("gyro").data[1]) * 57.29578
+
+        integral = float(getattr(self, "pitch_integral", 0.0))
+        integral = float(np.clip(integral + pitch * CONTROL_DT, -i_limit, i_limit))
+        self.pitch_integral = integral
+
+        comp = kp * pitch + kd * rate + ki * integral
+        comp = float(np.clip(comp, -clamp, clamp))
+
+        bias = np.zeros(6)
+        bias[2] = comp
+        bias[5] = comp
+        self._pitch_bias = bias
 
     def step(self, action):
         if self._needs_reset or self._closed or self._faulted:
@@ -245,11 +280,12 @@ class DiabloEnv(gym.Env):
         command = self.command.copy()
         saturated = 0
         max_torque = 0.0
+        self._update_pitch_control()
         for _ in range(round(CONTROL_DT / PHYSICS_DT)):
             q, dq = self.data.qpos[self.qi], self.data.qvel[self.vi]
             requested, applied = decode_action(action, q, dq, self.config.action_mode)
             saturated += int(np.count_nonzero(np.abs(requested - applied) > 1e-9))
-            self.data.ctrl[:] = applied
+            self.data.ctrl[:] = applied + self._pitch_bias
             max_torque = max(max_torque, float(np.max(np.abs(self.data.ctrl))))
             mujoco.mj_step(self.model, self.data)
             for warning in (
