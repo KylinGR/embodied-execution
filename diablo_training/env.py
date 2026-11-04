@@ -268,6 +268,44 @@ class DiabloEnv(gym.Env):
         bias[5] = comp
         self._pitch_bias = bias
 
+    def _apply_control(self, applied):
+        """LEG_MODE=pd 时腿由 PD 固定、轮子完全交给解析控制器。"""
+        import os
+
+        if os.environ.get("LEG_MODE", "policy") != "pd":
+            return applied
+
+        out = np.array(applied, dtype=float, copy=True)
+        q = self.data.qpos[self.qi]
+        dq = self.data.qvel[self.vi]
+        for j in (0, 1, 3, 4):
+            out[j] = 60.0 * (DEFAULT_Q[j] - q[j]) - 2.0 * dq[j]
+        out[2] = 0.0
+        out[5] = 0.0
+        return out
+
+    def _update_balance_control(self):
+        """解析平衡/速度/航向控制器，BALANCE_MODE=analytic 时生效。"""
+        import os
+
+        from . import balance
+
+        if os.environ.get("BALANCE_MODE", "none") != "analytic":
+            self._balance_bias = np.zeros(6)
+            return
+
+        if getattr(self, "_bal_state", None) is None or getattr(self, "steps", 0) == 0:
+            self._bal_state = balance.make_state(self.data, self.base_id)
+
+        self._balance_bias = balance.compute(
+            self._bal_state,
+            self.data,
+            self.model,
+            self.base_id,
+            self.command,
+            CONTROL_DT,
+        )
+
     def step(self, action):
         if self._needs_reset or self._closed or self._faulted:
             raise RuntimeError(
@@ -280,12 +318,12 @@ class DiabloEnv(gym.Env):
         command = self.command.copy()
         saturated = 0
         max_torque = 0.0
-        self._update_pitch_control()
+        self._update_balance_control()
         for _ in range(round(CONTROL_DT / PHYSICS_DT)):
             q, dq = self.data.qpos[self.qi], self.data.qvel[self.vi]
             requested, applied = decode_action(action, q, dq, self.config.action_mode)
             saturated += int(np.count_nonzero(np.abs(requested - applied) > 1e-9))
-            self.data.ctrl[:] = applied + self._pitch_bias
+            self.data.ctrl[:] = self._apply_control(applied) + self._balance_bias
             max_torque = max(max_torque, float(np.max(np.abs(self.data.ctrl))))
             mujoco.mj_step(self.model, self.data)
             for warning in (
