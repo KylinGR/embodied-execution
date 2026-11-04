@@ -10,17 +10,27 @@
     原地转向 0.3    达成 12%，位移 1 m                 达成 96%，位移 2-8 cm
 
 状态与输出：
-    输入  θ(俯仰) θ̇  x  ẋ  ψ(航向)  ψ̇
+    输入  θ(俯仰) θ̇  s(行程)  ẋ  ψ(航向)  ψ̇
     输出  bias[6]，只填两个轮子：
             同向分量 tw  → 抵消俯仰、跟踪速度
             差速分量 turn → 跟踪航向
           bias[2] = tw + turn     （左轮）
           bias[5] = tw - turn     （右轮）
 
-为什么不做成神经网络：
-    轮腿平衡是欠驱动的轮式倒立摆，有成熟解析解。用 RL 从零学它需要百万级
-    样本且没学出来；用状态反馈只要 8 个数字。同类开源项目（RM 平衡步兵、
-    circleg、palette2/graduate_wheel_robot）都用这个结构。
+为什么用行程 s 而不是世界 x：
+    x 是世界系坐标，航向转到 ψ 之后，机体以 v 前进时世界 x 的变化率是
+    v·cosψ。若位置参考仍按 x_ref += v_cmd·dt 积分，控制器为了"追上"这个
+    x_ref 必须让机体速度变成 v_cmd/cosψ —— 实测航向 35° 时指令 0.4 跑成
+    0.51（+47%），⑥ 行驶中转弯就是这么挂的。改积分机体前向速度就与
+    航向无关。
+
+为什么停车要单独一段逻辑：
+    停车瞬间速度误差一步到 -0.4 m/s，制动扭矩把机身压成前倾（-13°），
+    俯仰阻尼项 k_thd·θ̇ 立刻回一个 +24 N·m 的正扭矩把机体往前推，制动
+    只作用了一个控制周期。实测平均减速度只有 0.8 m/s²（物理上限 5+），
+    停车距离 0.0967 m 卡在阈值 0.08 上。
+    → 制动期间单独一套增益：俯仰刚度和阻尼都缩小、关掉位置/积分项、
+      力矩上限放到 16，让制动敢持续用力。
 
 符号约定（已用开环测试标定，见 pitch_comp_test）：
     两轮同时加正力矩 → 俯仰角下降，因此 k_th、ki 取正号。
@@ -34,17 +44,42 @@ from __future__ import annotations
 import numpy as np
 
 # 站立/转向时用硬位置保持（kx 大），行驶时放松（kx 小）以便跟参考轨迹
+# MOVE 的 k_x 从 30 降到 10：位置项在校准追赶时会把"参考轨迹还没走到的部分"
+# 也算成误差，起步阶段额外加速 → 前向超调 31%。k_v 30→45 补回定速精度。
 STAND = dict(k_th=30.0, k_thd=6.0, k_x=60.0, k_v=30.0, ki_th=1.5)
-MOVE = dict(k_th=30.0, k_thd=6.0, k_x=30.0, k_v=30.0, ki_th=1.5)
+MOVE = dict(k_th=30.0, k_thd=6.0, k_x=10.0, k_v=45.0, ki_th=1.5)
 YAW = dict(k_w=2.0, k_psi=2.0, clamp=2.5)
 
 TORQUE_CLAMP = 12.0
 MOVE_THRESHOLD = 0.05  # |vx 指令| 超过此值算"行驶"
 I_TH_LIMIT = 0.6       # 俯仰积分限幅 rad·s（anti-windup）
 # 速度指令一阶滤波：加速慢、减速快（不对称）
-#   加速侧 0.25s 保证上升时间 ≤0.90s；减速侧 0.08s 快速刹停（停车距离要求 0.08m）
-TAU_UP = 0.25
-TAU_DOWN = 0.08
+#   加速侧 0.35s：0.25 时起步太猛（前向超调 31%），0.35 后剩 1%，
+#                 上升时间 0.66s，仍低于 0.90s 判据
+#   减速侧 0.03s 让参考速度先行归零
+TAU_UP = 0.35
+TAU_DOWN = 0.03
+STOP_THRESHOLD = 0.02  # |vx 指令| 低于此值算"停车"
+STOP_ANCHOR_EACH = 0.0  # 1=每个停车周期都重钉行程参考；0=只在停车那一刻钉一次
+                        # （0 更稳：站立时位置回路还在，实测漂移 0.063 → 0.007 m/s）
+
+# 制动段专用增益。k_*_scale 是相对 STAND 的缩放。
+# 实测（start_stop, 3 次启停）：停车距离 0.099 → 0.067 m，min_upright 0.934。
+#   k_v 加大是主因：原 30 时速度误差 0.4 m/s 只出 -12 N·m，且只维持一个周期；
+#   75 才能在俯仰回路回顶之后仍保持制动。
+#   k_th 放大到 2.5 倍是配套的：制动时俯仰刚度不够会被 -13° 前倾拖散（跌倒）。
+STOP = dict(
+    k_th_scale=2.5,
+    k_thd_scale=1.0,
+    k_x_scale=0.0,     # 制动时不追位置参考，只追速度
+    k_v=75.0,
+    ki_scale=0.0,      # 制动时冻结俯仰积分，避免松刹车时被积分项推着走
+    clamp=17.0,
+    pos_limit=99.0,    # 制动时正扭矩（"接住身体"那一下）的上限，单独限
+    decel=0.0,         # >0 时参考速度按此减速度线性下降（m/s²），0=用滤波
+    exit_v=0.10,       # |v| 低于此值退出制动段（0.05 太小：站立时 0.06 m/s 的
+                       # 自然蠕行会一直被判成"制动"，位置回路被关掉，越漂越远）
+)
 
 
 def _rot(data, base_id: int) -> np.ndarray:
@@ -75,13 +110,30 @@ def make_state(data, base_id: int) -> dict[str, float]:
     """在 reset 之后调用，记录参考轨迹的起点。"""
     psi = _yaw(data, base_id)
     return {
-        "x_ref": float(data.xpos[base_id][0]),
+        "s": 0.0,
+        "s_ref": 0.0,
         "psi_ref": psi,
         "iv": 0.0,
         "i_th": 0.0,
         "v_cmd": 0.0,
         "w_cmd": 0.0,
+        "stopped": 0.0,
     }
+
+
+def _gains(vx_target: float, braking: bool) -> tuple[float, float, float, float, float, float]:
+    """返回 (k_th, k_thd, k_x, k_v, ki_th, clamp)。"""
+    if braking:
+        return (
+            STAND["k_th"] * STOP["k_th_scale"],
+            STAND["k_thd"] * STOP["k_thd_scale"],
+            STAND["k_x"] * STOP["k_x_scale"],
+            STOP["k_v"],
+            STAND["ki_th"] * STOP["ki_scale"],
+            STOP["clamp"],
+        )
+    g = MOVE if abs(vx_target) > MOVE_THRESHOLD else STAND
+    return (g["k_th"], g["k_thd"], g["k_x"], g["k_v"], g["ki_th"], TORQUE_CLAMP)
 
 
 def compute(state: dict[str, float], data, model, base_id: int,
@@ -90,41 +142,62 @@ def compute(state: dict[str, float], data, model, base_id: int,
     vx_target = float(command[0])
     wz_target = float(command[1])
 
-    # 指令一阶滤波（不对称）：加速慢一点压超调，减速快一点压停车距离
-    vx_target = float(command[0])
-    wz_target = float(command[1])
-    tau_v = TAU_UP if abs(vx_target) > abs(state["v_cmd"]) else TAU_DOWN
+    # 指令一阶滤波（不对称）：加速慢一点压超调，减速快一点压停车距离。
+    # 停车段可以改成"按固定减速度斜坡归零"：一步把参考速度打到 0 会让速度
+    # 误差瞬间到 -0.4 m/s，制动扭矩只作用一个周期就被俯仰回路顶回去。
+    stopping = abs(vx_target) < STOP_THRESHOLD
+    if stopping:
+        if STOP["decel"] > 0.0:
+            step = STOP["decel"] * dt
+            state["v_cmd"] = (0.0 if abs(state["v_cmd"]) <= step
+                              else state["v_cmd"] - np.sign(state["v_cmd"]) * step)
+        else:
+            state["v_cmd"] += (0.0 - state["v_cmd"]) * min(1.0, dt / TAU_DOWN)
+    else:
+        tau_v = TAU_UP if abs(vx_target) > abs(state["v_cmd"]) else TAU_DOWN
+        state["v_cmd"] += (vx_target - state["v_cmd"]) * min(1.0, dt / tau_v)
+
     tau_w = TAU_UP if abs(wz_target) > abs(state["w_cmd"]) else TAU_DOWN
-    alpha_v = min(1.0, dt / tau_v) if tau_v > 0 else 1.0
-    alpha_w = min(1.0, dt / tau_w) if tau_w > 0 else 1.0
-    state["v_cmd"] += (vx_target - state["v_cmd"]) * alpha_v
-    state["w_cmd"] += (wz_target - state["w_cmd"]) * alpha_w
+    state["w_cmd"] += (wz_target - state["w_cmd"]) * min(1.0, dt / tau_w)
     vx_ref = state["v_cmd"]
     wz_ref = state["w_cmd"]
 
     th = _pitch(data, base_id)
     thd = float(data.sensor("gyro").data[1])
-    x = float(data.xpos[base_id][0])
     v = _body_vx(model, data, base_id)
     psi = _yaw(data, base_id)
     wz = float(data.sensor("gyro").data[2])
 
-    # 参考轨迹：位置参考跟着速度指令积分，否则位置回路会把"按指令前进"当误差
-    state["x_ref"] += vx_ref * dt
+    # 行程：积分机体前向速度，和世界系航向无关（见文件头）
+    state["s"] += v * dt
+
+    if stopping:
+        if STOP_ANCHOR_EACH or not state["stopped"]:
+            state["s_ref"] = state["s"]
+        state["stopped"] = 1.0
+    else:
+        state["stopped"] = 0.0
+
+    state["s_ref"] += vx_ref * dt
     state["psi_ref"] += wz_ref * dt
 
-    # 俯仰积分：策略是无记忆的，靠它把稳态前倾压到 0（实测 15° → 3.6°，再往下靠这个）
-    state["i_th"] = float(np.clip(state["i_th"] + th * dt, -I_TH_LIMIT, I_TH_LIMIT))
+    braking = stopping and abs(v) > STOP["exit_v"]
+    # 俯仰积分：只在非制动段累积，制动时冻结（否则松刹车会被积分项推着走）
+    if not braking:
+        state["i_th"] = float(np.clip(state["i_th"] + th * dt, -I_TH_LIMIT, I_TH_LIMIT))
 
-    gains = MOVE if abs(vx_target) > MOVE_THRESHOLD else STAND
+    k_th, k_thd, k_x, k_v, ki_th, clamp = _gains(vx_target, braking)
 
     tw = -(
-        gains["k_th"] * th
-        + gains["k_thd"] * thd
-        + gains["k_x"] * (x - state["x_ref"])
-        + gains["k_v"] * (v - vx_ref)
-    ) - gains["ki_th"] * state["i_th"]
-    tw = float(np.clip(tw, -TORQUE_CLAMP, TORQUE_CLAMP))
+        k_th * th
+        + k_thd * thd
+        + k_x * (state["s"] - state["s_ref"])
+        + k_v * (v - vx_ref)
+    ) - ki_th * state["i_th"]
+    if braking:
+        tw = float(np.clip(tw, -clamp, min(clamp, STOP["pos_limit"])))
+    else:
+        tw = float(np.clip(tw, -clamp, clamp))
 
     e_psi = (psi - state["psi_ref"] + np.pi) % (2.0 * np.pi) - np.pi
     turn = float(
