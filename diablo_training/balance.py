@@ -82,6 +82,10 @@ STOP = dict(
 )
 
 
+# 最近一拍的分项力矩，供 posture_probe 做姿态体检（不参与控制）
+LAST: dict[str, float] = {}
+
+
 def _rot(data, base_id: int) -> np.ndarray:
     return np.asarray(data.xmat[base_id]).reshape(3, 3)
 
@@ -198,6 +202,18 @@ def compute(state: dict[str, float], data, model, base_id: int,
         tw = float(np.clip(tw, -clamp, min(clamp, STOP["pos_limit"])))
     else:
         tw = float(np.clip(tw, -clamp, clamp))
+
+    # 姿态体检用：把这一拍各项力矩分量留在模块级，posture_probe 直接读
+    LAST.clear()
+    LAST.update(
+        th=float(th), thd=float(thd), v=float(v), v_ref=float(vx_ref),
+        ds=float(state["s"] - state["s_ref"]), dv=float(v - vx_ref),
+        term_th=float(k_th * th), term_thd=float(k_thd * thd),
+        term_s=float(k_x * (state["s"] - state["s_ref"])),
+        term_v=float(k_v * (v - vx_ref)), term_i=float(ki_th * state["i_th"]),
+        i_th=float(state["i_th"]), tw=float(tw), braking=float(braking),
+        k_th=k_th, k_thd=k_thd, k_x=k_x, k_v=k_v, clamp=clamp,
+    )
 
     e_psi = (psi - state["psi_ref"] + np.pi) % (2.0 * np.pi) - np.pi
     turn = float(
