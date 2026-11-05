@@ -63,6 +63,11 @@ STOP_THRESHOLD = 0.02  # |vx 指令| 低于此值算"停车"
 STOP_ANCHOR_EACH = 0.0  # 1=每个停车周期都重钉行程参考；0=只在停车那一刻钉一次
                         # （0 更稳：站立时位置回路还在，实测漂移 0.063 → 0.007 m/s）
 
+# 延迟补偿：传感器/执行延迟 τ 时，轮子真正出力那一刻的俯仰角约等于 θ + θ̇·τ。
+# 用预测值做俯仰反馈可补掉大部分相位滞后；0 = 不补偿。
+# 实测（100 Hz 控制周期）：10 ms 延迟 start_stop 就开始掉、20 ms 连站立都崩。
+TH_PREDICT_S = 0.0
+
 # 制动段专用增益。k_*_scale 是相对 STAND 的缩放。
 # 实测（start_stop, 3 次启停）：停车距离 0.099 → 0.067 m，min_upright 0.934。
 #   k_v 加大是主因：原 30 时速度误差 0.4 m/s 只出 -12 N·m，且只维持一个周期；
@@ -192,8 +197,11 @@ def compute(state: dict[str, float], data, model, base_id: int,
 
     k_th, k_thd, k_x, k_v, ki_th, clamp = _gains(vx_target, braking)
 
+    # 延迟补偿：用 θ + θ̇·τ 近似"力矩真正作用到轮子时"的俯仰角
+    th_ctl = th + thd * TH_PREDICT_S if TH_PREDICT_S else th
+
     tw = -(
-        k_th * th
+        k_th * th_ctl
         + k_thd * thd
         + k_x * (state["s"] - state["s_ref"])
         + k_v * (v - vx_ref)
