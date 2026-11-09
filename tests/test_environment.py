@@ -5,11 +5,13 @@ import copy
 import hashlib
 import json
 import math
+import os
 from dataclasses import replace
 from pathlib import Path
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -32,6 +34,7 @@ from diablo_training.contract import (
     interface_contract,
     load_course,
     metric_name,
+    ppo_defaults_for_stage,
     profile_command,
     reward_defaults_for_stage,
     select_policy_best,
@@ -39,14 +42,21 @@ from diablo_training.contract import (
     verify_run_contract,
     verify_warm_start_contract,
     stage_training_contract,
+    task_id,
+    training_profile_schedule,
 )
 
 try:
     import mujoco
     import numpy as np
 
-    from diablo_training.control import decode_action, radial_feedforward
-    from diablo_training.control import wheel_command_targets
+    from diablo_training.control import (
+        closed_loop_yaw_target,
+        decode_action,
+        decompose_wheel_residual,
+        radial_feedforward,
+        wheel_command_targets,
+    )
     from diablo_training.env import Config, DiabloEnv, command_profile
     from diablo_training.model import (
         DEFAULT_Q,
@@ -63,6 +73,7 @@ try:
         TARGET_BASE_HEIGHT_M,
         TARGET_STANDING_HEIGHT_M,
         TARGET_WHOLE_HEIGHT_M,
+        WHEEL_HALF_TRACK,
         closure_errors,
     )
     from diablo_training.validation import validate_model
@@ -177,12 +188,12 @@ class ContractTests(unittest.TestCase):
             'float(w.get("straight_heading", 0.0))',
             source,
         )
-        self.assertIn("def _huber(error: torch.Tensor, tolerance: float)", source)
-        self.assertIn("ratio - 0.5", source)
         self.assertIn(
-            "speed_scale = torch.clamp(2.0 * cmd[:, 0].abs(), min=2.0 * zero_tol)",
+            "error: torch.Tensor, tolerance: torch.Tensor | float",
             source,
         )
+        self.assertIn("ratio - 0.5", source)
+        self.assertIn("speed_scale = torch.maximum(", source)
         self.assertIn("- speed_error.abs() / speed_scale", source)
         self.assertIn("directional_speed = direction * vx", source)
         self.assertIn(
@@ -201,7 +212,7 @@ class ContractTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            "torch.where(straight, wheel_difference, torch.zeros_like(wheel_difference))",
+            "wheel_straight = torch.abs(yaw_cmd) <= straight_yaw_tol",
             source,
         )
         self.assertIn("stopping & stop_metric_active", source)
@@ -213,6 +224,29 @@ class ContractTests(unittest.TestCase):
         self.assertIn("underspeed_cost = torch.where(", source)
         self.assertIn("overspeed_error = torch.clamp(", source)
         self.assertIn("overspeed_cost = torch.where(", source)
+        self.assertIn("yaw_underspeed_error = torch.clamp(", source)
+        self.assertIn("turn_angle_error = self._actual_turn_angle", source)
+        self.assertIn("turn_wheel_alignment_cost = torch.where(", source)
+        self.assertIn("def _margin_cost(", source)
+        self.assertIn(
+            "self._margin_cost(wheel_center_offset, turn_alignment_tol)",
+            source,
+        )
+        self.assertIn(
+            "hip_difference = leg_offset[:, 0] - leg_offset[:, 2]",
+            source,
+        )
+        self.assertIn(
+            "knee_difference = leg_offset[:, 1] - leg_offset[:, 3]",
+            source,
+        )
+        self.assertIn("yaw_cmd = self.command_term.yaw_target", source)
+        self.assertIn(
+            "effective_command[:, 1] = command_term.yaw_target",
+            source,
+        )
+        self.assertIn("command_term.yaw_target * 0.25", source)
+        self.assertIn('result["rehearsal"] = {', source)
         self.assertIn(
             "cmd[:, 0].abs() * (1.0 + overspeed_margin_fraction)",
             source,
@@ -232,9 +266,51 @@ class ContractTests(unittest.TestCase):
         self.assertIn("self._wheel_slip_peak_ratio", source)
         self.assertIn("self._wheel_sync_peak_ratio", source)
         self.assertIn("self._stop_speed_peak_ratio", source)
+        self.assertIn("self._stop_after_motion", source)
+        self.assertIn("post_motion_stop_cost", source)
+        self.assertIn('w.get("post_motion_stop_gate", 0.0)', source)
+        self.assertIn(
+            "self._last_cmd.abs() >= self.stop_after_motion_arm_speed",
+            source,
+        )
+        self.assertIn("self._completion_awarded", source)
+        self.assertIn('reward_components["profile_completion"]', source)
+        self.assertIn(
+            "cmd[:, 1].abs() >= self.turn_radius_window_min_yaw",
+            source,
+        )
+        self.assertIn(
+            "vx.abs() >= self.turn_radius_window_min_speed",
+            source,
+        )
         self.assertIn("torch.clamp(self._wheel_slip_peak_ratio - 1.0", source)
         self.assertIn("torch.clamp(self._wheel_sync_peak_ratio - 1.0", source)
         self.assertIn("torch.clamp(self._stop_speed_peak_ratio - 1.0", source)
+        self.assertIn("wheel_sync_cost = torch.where(", source)
+        self.assertIn("wheel_chatter_cost = torch.where(", source)
+        self.assertIn(
+            "wheel_common_action = raw_wheel_action.mean(dim=1)",
+            source,
+        )
+        self.assertIn(
+            "wheel_common_residual_cost = torch.where(\n"
+            "            ~wheel_straight,",
+            source,
+        )
+        self.assertIn(
+            '- float(w.get("wheel_common_residual", 0.0))',
+            source,
+        )
+        self.assertIn("common_residual_turn_threshold", source)
+        self.assertIn(
+            "torch.where(\n                straight,\n"
+            "                torch.abs(cross_track_error),",
+            source,
+        )
+        self.assertIn(
+            '- float(p.get("wheel_sync", 0.0)) * wheel_sync_cost',
+            source,
+        )
         self.assertIn("settled_wheel_action_cost = torch.where(", source)
         self.assertIn("settled_drift_cost = torch.where(", source)
         self.assertIn("roll_cost = torch.square(gravity_xy[:, 1])", source)
@@ -265,7 +341,7 @@ class ContractTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            "wheel_sync_current_cost = torch.where(\n            straight,",
+            "wheel_sync_current_cost = torch.where(\n            wheel_straight,",
             source,
         )
         self.assertIn(
@@ -274,12 +350,14 @@ class ContractTests(unittest.TestCase):
         )
         self.assertIn("self._env.cfg.scale_rewards_by_dt", source)
         self.assertIn("wheel_alignment_cost", source)
-        self.assertIn("heading_tolerance_rad", source)
-        self.assertIn("straight_heading_tolerance_rad", source)
+        self.assertIn("heading_drift_tol", source)
+        self.assertIn("straight_heading_tol", source)
         self.assertIn("Metrics/straight_heading_error_rad", source)
         self.assertIn("Metrics/cross_track_cost", source)
         self.assertIn("Metrics/wheel_slip_gate_cost", source)
         self.assertIn("Metrics/stop_speed_gate_cost", source)
+        self.assertIn("Metrics/post_motion_stop_quality", source)
+        self.assertIn("Metrics/post_motion_stop_cost", source)
         self.assertIn("Metrics/wheel_sync_gate_cost", source)
         self.assertIn("Metrics/wheel_chatter_cost", source)
         self.assertIn('f"Metrics/{profile_name}/{metric_name}_mean"', source)
@@ -323,10 +401,14 @@ class ContractTests(unittest.TestCase):
         self.assertIn('"reset_heading_range_deg"', source)
         self.assertIn('stage.get("observation_noise", 0.02)', source)
         self.assertIn('schedule="adaptive"', source)
+        self.assertIn("TURN_MAX_LEARNING_RATE = 1e-3", source)
         self.assertIn("POLICY_CLASS", source)
         self.assertEqual(source.count("class_name=POLICY_CLASS"), 2)
         self.assertIn('"init_std": 0.3', source)
-        self.assertIn("COURSE.speed_ppo", source)
+        self.assertIn('"std_range": (std_min, std_max)', source)
+        self.assertNotIn("std.fill_(0.3)", source)
+        self.assertIn("std.fill_(initial_std)", source)
+        self.assertIn("ppo_defaults_for_stage(COURSE, name)", source)
         self.assertIn("runner_cls=XingtianOnPolicyRunner", source)
         self.assertIn('"obs": {0: "batch"}', source)
         self.assertIn("def create_actor_initial_checkpoint(", source)
@@ -346,7 +428,7 @@ class ContractTests(unittest.TestCase):
         self.assertIn("heading_drift_cost = torch.where(", source)
         self.assertIn("settled_heading_drift_weight", source)
         self.assertIn(
-            "math.radians(float(heading_drift_gate_deg)) * 0.75",
+            "0.75 * torch.deg2rad(",
             source,
         )
         self.assertIn("self._huber(settled_heading_drift, heading_drift_tol)", source)
@@ -415,7 +497,12 @@ class ContractTests(unittest.TestCase):
         self.assertIn("path_lateral_velocity", privileged_source)
         self.assertIn("robot.data.heading_w - command_term.target_heading", source)
         self.assertIn("if frame.shape[-1] != PROPRIO_FRAME_DIM", source)
-        self.assertIn("validate_policy_io(obs, action)", source)
+        evaluation_source = (
+            Path(__file__).resolve().parents[1]
+            / "diablo_training"
+            / "evaluation.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("validate_policy_io(obs, action)", evaluation_source)
         self.assertIn("_raw[:, self._leg_channels]", source)
         self.assertIn("_raw[:, self._wheel_channels]", source)
         self.assertNotIn("_raw[:, self._leg_ids]", source)
@@ -446,24 +533,24 @@ class ContractTests(unittest.TestCase):
 
     def test_stage_training_contract_ignores_unrelated_stage_changes(self):
         course = load_course()
-        original = stage_training_contract(course, "flat_motion_010")
+        original = stage_training_contract(course, "flat_motion_020")
         stages = copy.deepcopy(course.stages)
-        stages["flat_motion_020"]["reward_weights"]["speed"] += 0.5
-        stages["flat_motion_010"]["gate"]["min_pass_rate"] = 0.5
+        stages["flat_motion_030"]["reward_weights"]["speed"] += 0.5
+        stages["flat_motion_020"]["gate"]["min_pass_rate"] = 0.5
         changed = replace(course, stages=stages)
         self.assertEqual(
             original,
-            stage_training_contract(changed, "flat_motion_010"),
-        )
-        self.assertNotEqual(
-            stage_training_contract(course, "flat_motion_020"),
             stage_training_contract(changed, "flat_motion_020"),
         )
-        stages["flat_motion_010"]["reward_weights"]["speed"] += 0.25
+        self.assertNotEqual(
+            stage_training_contract(course, "flat_motion_030"),
+            stage_training_contract(changed, "flat_motion_030"),
+        )
+        stages["flat_motion_020"]["reward_weights"]["speed"] += 0.25
         training_changed = replace(course, stages=stages)
         self.assertNotEqual(
             original,
-            stage_training_contract(training_changed, "flat_motion_010"),
+            stage_training_contract(training_changed, "flat_motion_020"),
         )
 
     def test_warm_start_allows_target_height_change(self):
@@ -514,25 +601,37 @@ class ContractTests(unittest.TestCase):
     def test_ppo_json_only_contains_consumed_parameters(self):
         root = Path(__file__).resolve().parents[1] / "diablo_training"
         removed = {"n_steps", "batch_size", "policy_kwargs"}
-        for filename in ("curriculum.json", "flat_motion_speed_stages.json"):
+        for filename in (
+            "curriculum.json",
+            "flat_motion_speed_stages.json",
+            "flat_turning_speed_stages.json",
+        ):
             source = json.loads((root / filename).read_text(encoding="utf-8"))
             self.assertFalse(removed & set(source["ppo"]), filename)
         speed_source = json.loads(
             (root / "flat_motion_speed_stages.json").read_text(encoding="utf-8")
         )
         self.assertEqual(load_course().speed_ppo, speed_source["ppo"])
+        turn_source = json.loads(
+            (root / "flat_turning_speed_stages.json").read_text(encoding="utf-8")
+        )
+        course = load_course()
+        self.assertEqual(course.turn_ppo, turn_source["ppo"])
+        for name in course.turn_order:
+            ppo = ppo_defaults_for_stage(course, name)
+            ppo.update(course.stage(name)["ppo"])
+            self.assertLessEqual(ppo["ent_coef"], 0.002, name)
+            self.assertLessEqual(ppo["learning_rate"], 0.0003, name)
 
     def test_course_order_and_seed_sets(self):
         course = load_course()
-        self.assertEqual(len(course.order), 20)
+        self.assertEqual(len(course.order), 14)
         self.assertEqual(course.order[0], "flat_balance")
-        self.assertEqual(course.order[1], "flat_motion_010")
-        self.assertEqual(course.order[2], "flat_motion_020")
-        self.assertEqual(course.order[3], "flat_motion_030")
-        self.assertEqual(course.order[4], "flat_motion_040")
+        self.assertEqual(course.order[1], "flat_motion_020")
+        self.assertEqual(course.order[2], "flat_motion_030")
+        self.assertEqual(course.order[3], "flat_motion_040")
         self.assertEqual(course.order[-1], "composite")
         balance = course.stage("flat_balance")
-        motion_010 = course.stage("flat_motion_010")
         motion_020 = course.stage("flat_motion_020")
         motion_030 = course.stage("flat_motion_030")
         motion_040 = course.stage("flat_motion_040")
@@ -540,7 +639,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(course.reward_penalties["fall"], 40.0)
         self.assertEqual(
             course.reward_defaults["settled_heading_drift_weight"],
-            0.75,
+            2.0,
         )
         self.assertNotIn("pitch_weight", course.reward_defaults)
         self.assertEqual(balance["budget"], 40000000)
@@ -618,69 +717,6 @@ class ContractTests(unittest.TestCase):
             100.0,
         )
         self.assertGreater(balance["overrides"]["wheel_alignment"], 1.0)
-        self.assertEqual(motion_010["budget"], 6000000)
-        self.assertEqual(motion_010["limits"]["forward"], 0.1)
-        self.assertEqual(motion_010["reset_heading_range_deg"], [-5.0, 5.0])
-        self.assertEqual(motion_010["observation_noise"], 0.005)
-        self.assertEqual(motion_010["termination_tilt_deg"], 12.0)
-        self.assertEqual(motion_010["hold_settle_time_s"], 0.5)
-        self.assertEqual(motion_010["overrides"]["fall"], 40.0)
-        self.assertEqual(motion_010["ppo"]["learning_rate"], 0.0003)
-        self.assertEqual(motion_010["ppo"]["n_epochs"], 4)
-        self.assertEqual(motion_010["ppo"]["ent_coef"], 0.006)
-        self.assertEqual(motion_010["ppo"]["target_kl"], 0.015)
-        self.assertEqual(
-            motion_010["control"]["wheel_speed_target_max_rad_s"],
-            2.0,
-        )
-        self.assertEqual(motion_010["reward_weights"]["pitch"], 2.2)
-        self.assertEqual(motion_010["reward_weights"]["upright"], 2.2)
-        self.assertEqual(motion_010["reward_weights"]["drift"], 1.5)
-        self.assertEqual(motion_010["reward_weights"]["yaw"], 1.2)
-        self.assertEqual(motion_010["overrides"]["action_rate"], 0.04)
-        self.assertEqual(motion_010["overrides"]["wheel_alignment"], 1.2)
-        self.assertEqual(
-            motion_010["reward_defaults"]["yaw_tolerance_base_rad_s"],
-            0.03,
-        )
-        self.assertEqual(
-            motion_010["control"]["wheel_target_slew_rad_s2"],
-            4.0,
-        )
-        self.assertEqual(
-            motion_010["profiles"][0]["points"][2][1],
-            0.1,
-        )
-        self.assertNotIn("pitch_weight", motion_010["reward_defaults"])
-        self.assertEqual(motion_010["gate"]["max_backslide_mps"], 0.06)
-        self.assertEqual(motion_010["gate"]["max_hold_drift_after_0.5s_m"], 0.02)
-        self.assertEqual(
-            motion_010["gate"]["max_heading_drift_after_0.5s_deg"],
-            2.0,
-        )
-        self.assertEqual(motion_010["gate"]["max_final_speed_mps"], 0.02)
-        self.assertEqual(motion_010["gate"]["max_speed_mae_mps"], 0.03)
-        self.assertEqual(motion_010["gate"]["max_yaw_mae_rad_s"], 0.08)
-        self.assertEqual(motion_010["gate"]["max_cross_track_error_m"], 0.05)
-        self.assertEqual(
-            motion_010["gate"]["max_mean_steady_wheel_slip_mps"],
-            0.02,
-        )
-        self.assertEqual(
-            motion_010["gate"]["max_transient_wheel_slip_mps"],
-            0.05,
-        )
-        self.assertNotIn(
-            "max_settled_wheel_slip_fraction_of_peak",
-            motion_010["gate"],
-        )
-        self.assertEqual(
-            motion_010["gate"][
-                "max_settled_straight_wheel_speed_difference_mps"
-            ],
-            0.04,
-        )
-        self.assertNotIn("max_hold_drift_m", motion_010["gate"])
         self.assertEqual(
             metric_name("max_hold_drift_after_0.5s_m"),
             "hold_drift_after_0.5s_m",
@@ -896,6 +932,9 @@ class ContractTests(unittest.TestCase):
                 "upstream.lock.json",
                 "curriculum.json",
                 "flat_motion_speed_stages.json",
+                "flat_turning_speed_stages.json",
+                "flat_adaptive_speed_stages.json",
+                "training_objectives.json",
             },
         )
         tampered = dict(contract)
@@ -950,6 +989,544 @@ class ContractTests(unittest.TestCase):
                 {"contract": contract, "stage": "flat_motion"},
                 "flat_balance",
             )
+
+    def test_turning_course_profiles_and_safety_limits(self):
+        course = load_course()
+        self.assertEqual(
+            course.turn_order,
+            (
+                "flat_turn_in_place_040",
+                "flat_turn_moving_040",
+                "flat_turn_in_place_080",
+                "flat_turn_moving_080",
+                "flat_turn_in_place_120",
+                "flat_turn_moving_120",
+                "flat_turn_in_place_160_200",
+            ),
+        )
+        self.assertEqual(len(course.stages), 27)
+        self.assertEqual(
+            sum(course.stage(name)["budget"] for name in course.turn_order),
+            54_000_000,
+        )
+        expected_tilt = {
+            "flat_turn_in_place_040": 18.0,
+            "flat_turn_moving_040": 18.0,
+            "flat_turn_in_place_080": 18.0,
+            "flat_turn_moving_080": 18.0,
+            "flat_turn_in_place_120": 16.0,
+            "flat_turn_moving_120": 16.0,
+            "flat_turn_in_place_160_200": 16.0,
+        }
+        moving_yaw = {
+            "flat_turn_moving_040": 0.4,
+            "flat_turn_moving_080": 0.8,
+            "flat_turn_moving_120": 1.2,
+        }
+        moving_speed = {
+            "flat_turn_moving_040": 0.4,
+            "flat_turn_moving_080": 0.6,
+            "flat_turn_moving_120": 0.9,
+        }
+
+        def integrated_yaw(profile):
+            points = profile["points"]
+            return sum(
+                0.5
+                * (float(start[2]) + float(end[2]))
+                * (float(end[0]) - float(start[0]))
+                for start, end in zip(points, points[1:])
+            )
+
+        for name in course.turn_order:
+            stage = course.stage(name)
+            self.assertEqual(
+                stage["termination_tilt_deg"],
+                expected_tilt[name],
+                name,
+            )
+            points = [
+                point
+                for profile in stage["profiles"]
+                for point in profile["points"]
+            ]
+            self.assertIn("max_yaw_rate_peak_rad_s", stage["gate"])
+            self.assertIn("max_turn_angle_error_rad", stage["gate"])
+            self.assertGreater(
+                stage["reward_weights"]["yaw_underspeed_cost"],
+                0.0,
+            )
+            self.assertGreater(
+                stage["reward_weights"]["turn_angle_cost"],
+                0.0,
+            )
+            self.assertGreater(
+                stage["reward_weights"]["turn_wheel_alignment"],
+                0.0,
+            )
+            self.assertEqual(stage["reward_weights"]["leg_symmetry"], 0.2)
+            self.assertEqual(
+                stage["reward_weights"]["turn_wheel_alignment"],
+                0.4,
+            )
+            self.assertEqual(
+                stage["reward_weights"]["wheel_common_residual"],
+                0.2,
+            )
+            self.assertEqual(
+                stage["control"][
+                    "wheel_common_residual_limit_fraction"
+                ],
+                0.2,
+            )
+            self.assertLessEqual(
+                reward_defaults_for_stage(course, name)[
+                    "yaw_tolerance_base_rad_s"
+                ],
+                stage["gate"]["max_yaw_mae_rad_s"] * 0.8,
+                name,
+            )
+            self.assertLessEqual(stage["gate"]["max_roll_deg"], 9.0)
+            for profile in stage["profiles"]:
+                profile_points = profile["points"]
+                self.assertEqual(
+                    [float(value) for value in profile_points[0][1:]],
+                    [0.0, 0.0],
+                    f"{name}/{profile['name']} initial command",
+                )
+                self.assertEqual(
+                    [float(value) for value in profile_points[1][1:]],
+                    [0.0, 0.0],
+                    f"{name}/{profile['name']} initial command",
+                )
+                self.assertAlmostEqual(
+                    float(profile_points[1][0])
+                    - float(profile_points[0][0]),
+                    2.0,
+                )
+                self.assertEqual(
+                    [float(value) for value in profile_points[-2][1:]],
+                    [0.0, 0.0],
+                    f"{name}/{profile['name']} terminal command",
+                )
+                self.assertEqual(
+                    [float(value) for value in profile_points[-1][1:]],
+                    [0.0, 0.0],
+                    f"{name}/{profile['name']} terminal command",
+                )
+                terminal_hold = (
+                    float(profile_points[-1][0])
+                    - float(profile_points[-2][0])
+                )
+                self.assertGreaterEqual(terminal_hold, 1.0)
+                self.assertLessEqual(terminal_hold, 4.0)
+            if name in moving_yaw:
+                profiles = {
+                    profile["name"]: profile
+                    for profile in stage["profiles"]
+                }
+                self.assertEqual(set(profiles), {"forward", "backward"})
+                expected_yaw = [
+                    0.0,
+                    0.0,
+                    0.0,
+                    -moving_yaw[name],
+                    -moving_yaw[name],
+                    moving_yaw[name],
+                    moving_yaw[name],
+                    0.0,
+                    0.0,
+                    0.0,
+                ]
+                for direction, speed_sign in (("forward", 1.0), ("backward", -1.0)):
+                    profile = profiles[direction]
+                    times = [float(point[0]) for point in profile["points"]]
+                    self.assertEqual(len(times), 10)
+                    self.assertTrue(
+                        all(end > start for start, end in zip(times, times[1:]))
+                    )
+                    self.assertAlmostEqual(times[4] - times[3], 6.0)
+                    self.assertAlmostEqual(times[6] - times[5], 6.0)
+                    self.assertGreaterEqual(times[-1] - times[-2], 1.0)
+                    self.assertLessEqual(times[-1] - times[-2], 2.0)
+                    self.assertEqual(
+                        [float(point[2]) for point in profile["points"]],
+                        expected_yaw,
+                    )
+                    speeds = [
+                        float(point[1]) for point in profile["points"]
+                    ]
+                    self.assertEqual(speeds[:2], [0.0, 0.0])
+                    self.assertEqual(
+                        speeds[2:7],
+                        [speed_sign * moving_speed[name]] * 5,
+                    )
+                    self.assertIn(
+                        speeds[7],
+                        (0.0, speed_sign * moving_speed[name]),
+                    )
+                    self.assertEqual(speeds[8:], [0.0, 0.0])
+                    self.assertEqual(
+                        profile["start"],
+                        "start" if direction == "forward" else "end",
+                    )
+                self.assertEqual(
+                    stage["control"]["wheel_speed_target_max_rad_s"],
+                    16.0 if name == "flat_turn_moving_120" else 14.0,
+                    name,
+                )
+            else:
+                self.assertEqual(
+                    {float(point[1]) for point in points},
+                    {0.0},
+                    name,
+                )
+                self.assertEqual(
+                    stage["control"]["wheel_speed_target_max_rad_s"],
+                    8.0,
+                    name,
+                )
+                for profile in stage["profiles"]:
+                    angle = integrated_yaw(profile)
+                    if profile["name"].startswith("clockwise"):
+                        direction = -1.0
+                    else:
+                        direction = 1.0
+                    yaw_rate = abs(float(profile["points"][2][2]))
+                    if yaw_rate > 0.0:
+                        ramp_time = float(
+                            profile["points"][2][0]
+                            - profile["points"][1][0]
+                        )
+                        hold_time = float(
+                            profile["points"][3][0]
+                            - profile["points"][2][0]
+                        )
+                        decel_time = float(
+                            profile["points"][4][0]
+                            - profile["points"][3][0]
+                        )
+                        self.assertAlmostEqual(
+                            angle,
+                            direction
+                            * yaw_rate
+                            * (
+                                0.5 * ramp_time
+                                + hold_time
+                                + 0.5 * decel_time
+                            ),
+                            places=9,
+                        )
+                        self.assertAlmostEqual(
+                            float(profile["points"][3][0])
+                            - float(profile["points"][2][0]),
+                            10.0,
+                        )
+
+        final = course.stage("flat_turn_in_place_160_200")
+        in_place_040 = course.stage("flat_turn_in_place_040")
+        self.assertEqual(in_place_040["gate"]["max_yaw_mae_rad_s"], 0.06)
+        self.assertAlmostEqual(
+            reward_defaults_for_stage(
+                course,
+                "flat_turn_in_place_040",
+            )["yaw_tolerance_base_rad_s"],
+            0.048,
+        )
+        self.assertEqual(
+            in_place_040["gate"]["max_turn_angle_error_rad"],
+            0.35,
+        )
+        self.assertEqual(final["gate"]["max_yaw_rate_peak_rad_s"], 2.0)
+        self.assertEqual(
+            max(
+                abs(float(point[2]))
+                for profile in final["profiles"]
+                for point in profile["points"]
+            ),
+            2.0,
+        )
+        self.assertEqual(
+            {profile["name"] for profile in final["profiles"]},
+            {
+                "clockwise_160",
+                "counterclockwise_160",
+                "clockwise_200",
+                "counterclockwise_200",
+            },
+        )
+        self.assertEqual(
+            ppo_defaults_for_stage(course, "flat_turn_moving_040"),
+            course.turn_ppo,
+        )
+        moving_040_ppo = course.stage("flat_turn_moving_040")["ppo"]
+        self.assertEqual(moving_040_ppo["learning_rate"], 0.0003)
+        self.assertEqual(moving_040_ppo["ent_coef"], 0.002)
+        turn_ppo = ppo_defaults_for_stage(
+            course,
+            "flat_turn_moving_040",
+        )
+        self.assertEqual(turn_ppo["gamma"], 0.995)
+        self.assertEqual(turn_ppo["gae_lambda"], 0.97)
+        self.assertIsNotNone(course.rehearsal_gate)
+        self.assertNotEqual(
+            course.rehearsal_gate,
+            course.stage("flat_turn_in_place_040")["gate"],
+        )
+        self.assertEqual(
+            reward_defaults_for_stage(
+                course, "flat_turn_moving_120"
+            )["yaw_overspeed_margin_fraction"],
+            0.05,
+        )
+        self.assertEqual(
+            reward_defaults_for_stage(
+                course, "flat_turn_in_place_160_200"
+            )["yaw_overspeed_margin_fraction"],
+            0.0,
+        )
+        turn_task_ids = {
+            task_id(name)
+            for name in course.turn_order
+        }
+        self.assertEqual(len(turn_task_ids), 7)
+        contract = interface_contract(course)
+        self.assertEqual(contract["turning_stage_order"], list(course.turn_order))
+        self.assertEqual(contract["adaptive_stage_order"], ["flat_adaptive_speed"])
+        self.assertEqual(
+            set(contract["task_ids"]),
+            set(course.all_order),
+        )
+
+    def test_in_place_turning_has_straight_rehearsal_mix(self):
+        course = load_course()
+        in_place_names = tuple(
+            name for name in course.turn_order if "in_place" in name
+        )
+        self.assertEqual(len(in_place_names), 4)
+
+        for name in in_place_names:
+            stage = course.stage(name)
+            self.assertEqual(
+                len(stage["profiles"]),
+                4 if name == "flat_turn_in_place_160_200" else 2,
+            )
+            self.assertFalse(
+                {
+                    "forward_rehearsal",
+                    "backward_rehearsal",
+                }
+                & {profile["name"] for profile in stage["profiles"]}
+            )
+            expected_rehearsal_weights = {
+                "speed": 0.8,
+                "underspeed": 0.5,
+                "underspeed_cost": 0.2,
+                "overspeed": 0.8,
+                "backslide": 0.3,
+            }
+            for key, value in expected_rehearsal_weights.items():
+                self.assertEqual(stage["reward_weights"][key], value)
+            training_profiles = stage["training_profiles"]
+            self.assertEqual(
+                {profile["name"] for profile in training_profiles},
+                {"forward_rehearsal", "backward_rehearsal"},
+            )
+            base_duration = max(
+                float(profile["points"][-1][0])
+                for profile in stage["profiles"]
+            )
+            for profile in training_profiles:
+                points = profile["points"]
+                self.assertEqual(
+                    {float(point[2]) for point in points},
+                    {0.0},
+                )
+                self.assertEqual(profile_command(profile, 2.0), (0.0, 0.0))
+                expected_speed = float(points[2][1])
+                self.assertAlmostEqual(
+                    profile_command(profile, 6.0)[0],
+                    expected_speed,
+                )
+                self.assertAlmostEqual(
+                    profile_command(profile, 4.0)[0],
+                    expected_speed / 2.0,
+                )
+                self.assertLessEqual(float(points[-1][0]), base_duration + 1e-9)
+                self.assertEqual(
+                    [float(value) for value in points[-2][1:]],
+                    [0.0, 0.0],
+                )
+                self.assertEqual(
+                    [float(value) for value in points[-1][1:]],
+                    [0.0, 0.0],
+                )
+                self.assertAlmostEqual(
+                    float(points[-1][0]) - float(points[-2][0]),
+                    2.0,
+                )
+                if name != "flat_turn_in_place_040":
+                    self.assertAlmostEqual(
+                        float(points[3][0]) - float(points[2][0]),
+                        4.0,
+                    )
+                    self.assertAlmostEqual(
+                        float(points[-2][0]) - float(points[3][0]),
+                        8.0,
+                    )
+
+            schedule = training_profile_schedule(stage)
+            self.assertEqual(len(schedule) % 4, 0)
+            forward_count = schedule.count("forward_rehearsal")
+            backward_count = schedule.count("backward_rehearsal")
+            turn_count = len(schedule) - forward_count - backward_count
+            self.assertEqual(forward_count, backward_count)
+            self.assertGreater(turn_count, forward_count + backward_count)
+            self.assertGreaterEqual(
+                forward_count + backward_count,
+                len(schedule) / 5,
+            )
+
+        for name in (
+            "flat_turn_moving_040",
+            "flat_turn_moving_080",
+            "flat_turn_moving_120",
+        ):
+            self.assertNotIn("training_profiles", course.stage(name))
+
+    def test_training_tolerances_are_tighter_than_evaluation_gates(self):
+        course = load_course()
+        for name in course.all_order:
+            stage = course.stage(name)
+            gate = stage["gate"]
+            defaults = reward_defaults_for_stage(course, name)
+            self.assertEqual(defaults["heading_yaw_gain"], 0.75)
+            self.assertEqual(
+                defaults["heading_yaw_correction_limit_rad_s"],
+                0.2,
+            )
+            if "max_speed_mae_mps" in gate:
+                self.assertLessEqual(
+                    defaults["speed_tolerance_base_mps"],
+                    gate["max_speed_mae_mps"] * 0.8,
+                )
+            if "max_yaw_mae_rad_s" in gate:
+                self.assertLessEqual(
+                    defaults["yaw_tolerance_base_rad_s"],
+                    gate["max_yaw_mae_rad_s"] * 0.8,
+                )
+                if "yaw_underspeed_tolerance_rad_s" in defaults:
+                    self.assertLessEqual(
+                        defaults["yaw_underspeed_tolerance_rad_s"],
+                        gate["max_yaw_mae_rad_s"] * 0.8,
+                    )
+            if "max_mean_abs_pitch_deg" in gate:
+                self.assertLessEqual(
+                    defaults["pitch_tolerance_rad"],
+                    math.radians(gate["max_mean_abs_pitch_deg"]) * 0.8,
+                )
+            height_limit = gate.get(
+                "max_settled_mean_height_error_m",
+                gate.get("mean_height_tolerance_m"),
+            )
+            if height_limit is not None:
+                self.assertLessEqual(
+                    defaults["height_tolerance_m"],
+                    height_limit * 0.8,
+                )
+            slip_limit = gate.get(
+                "max_settled_wheel_slip_mps",
+                gate.get(
+                    "max_wheel_slip_mps",
+                    gate.get("max_mean_steady_wheel_slip_mps"),
+                ),
+            )
+            if slip_limit is not None:
+                self.assertLessEqual(
+                    defaults["wheel_slip_tolerance_mps"],
+                    slip_limit * 0.8,
+                )
+            sync_limit = gate.get(
+                "max_settled_straight_wheel_speed_difference_mps",
+                gate.get("max_straight_wheel_speed_difference_mps"),
+            )
+            if sync_limit is not None:
+                self.assertLessEqual(
+                    defaults["wheel_sync_tolerance_mps"],
+                    sync_limit * 0.8,
+                )
+            drift_limit = gate.get(
+                "max_hold_drift_after_0.5s_m",
+                gate.get("max_hold_drift_m"),
+            )
+            if drift_limit is not None:
+                self.assertLessEqual(
+                    defaults["drift_tolerance_m"],
+                    drift_limit * 0.8,
+                )
+            if "max_stop_speed_mps" in gate:
+                self.assertLessEqual(
+                    defaults["zero_speed_tolerance_mps"],
+                    gate["max_stop_speed_mps"] * 0.8,
+                )
+            if "max_cross_track_error_m" in gate:
+                self.assertLessEqual(
+                    defaults["cross_track_tolerance_m"],
+                    gate["max_cross_track_error_m"] * 0.8,
+                )
+            if "max_wheel_center_offset_m" in gate:
+                self.assertLessEqual(
+                    defaults["wheel_alignment_tolerance_m"],
+                    gate["max_wheel_center_offset_m"] * 0.8,
+                )
+                if "turn_wheel_alignment_tolerance_m" in defaults:
+                    self.assertLessEqual(
+                        defaults["turn_wheel_alignment_tolerance_m"],
+                        gate["max_wheel_center_offset_m"] * 2.0 / 3.0,
+                    )
+            if "max_final_heading_error_deg" in gate:
+                heading_limit = math.radians(
+                    gate["max_final_heading_error_deg"]
+                )
+                self.assertLessEqual(
+                    defaults["straight_heading_tolerance_rad"],
+                    heading_limit * 0.8,
+                )
+                if "turn_angle_tolerance_rad" in defaults:
+                    turn_limit = min(
+                        heading_limit,
+                        gate.get("max_turn_angle_error_rad", heading_limit),
+                    )
+                    self.assertLessEqual(
+                        defaults["turn_angle_tolerance_rad"],
+                        turn_limit * 0.8,
+                    )
+
+    def test_replay_records_turn_asymmetry_diagnostics(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "record_headless.py").read_text(encoding="utf-8")
+        self.assertIn("robot.find_joints(GAIT_JOINTS", source)
+        self.assertNotIn("robot.find_joints(JOINTS", source)
+        for field in (
+            "command_yaw_effective",
+            "target_heading_deg",
+            "wheel_center_offset_signed_m",
+            "left_hip_offset_rad",
+            "right_hip_offset_rad",
+            "left_knee_offset_rad",
+            "right_knee_offset_rad",
+            "hip_difference_rad",
+            "knee_difference_rad",
+            "wheel_common_action",
+            "wheel_differential_action",
+            "mean_wheel_common_action",
+            "max_abs_wheel_common_action",
+            "mean_wheel_differential_action",
+            "mean_wheel_center_offset_signed_m",
+            "max_abs_hip_difference_rad",
+            "max_abs_knee_difference_rad",
+        ):
+            self.assertIn(field, source)
 
     def test_motion_speed_curriculum_is_smooth_and_complete(self):
         course = load_course()
@@ -1152,7 +1729,6 @@ class ContractTests(unittest.TestCase):
     def test_speed_stage_yaw_and_wheel_slip_calibration(self):
         course = load_course()
         expected_slip = {
-            "flat_motion_010": (0.08, 0.03, 0.02, 0.05),
             "flat_motion_020": (0.08, 0.035, 0.025, 0.08),
             "flat_motion_030": (0.08, 0.04, 0.03, 0.10),
             "flat_motion_040": (0.08, 0.05, 0.035, 0.12),
@@ -1194,12 +1770,6 @@ class ContractTests(unittest.TestCase):
                 name,
             )
         self.assertEqual(
-            course.stage("flat_motion_010")["gate"][
-                "max_heading_drift_after_0.5s_deg"
-            ],
-            2.0,
-        )
-        self.assertEqual(
             course.stage("flat_balance")["gate"]["max_yaw_mae_rad_s"],
             0.02,
         )
@@ -1211,7 +1781,6 @@ class ContractTests(unittest.TestCase):
     def test_speed_stage_pitch_and_upright_calibration(self):
         course = load_course()
         expected = {
-            "flat_motion_010": (3.0, 0.93),
             "flat_motion_020": (3.0, 0.93),
             "flat_motion_030": (3.0, 0.93),
             "flat_motion_040": (3.25, 0.92),
@@ -1248,7 +1817,7 @@ class ContractTests(unittest.TestCase):
 
     def test_every_gate_has_an_evaluable_metric_name(self):
         course = load_course()
-        for name in course.order:
+        for name in course.all_order:
             for gate_name in course.stage(name)["gate"]:
                 self.assertTrue(metric_name(gate_name))
         reward_source = ast.parse(
@@ -1267,11 +1836,11 @@ class ContractTests(unittest.TestCase):
                         }
         required = {
             metric_name(gate_name)
-            for name in course.order
+            for name in course.all_order
             for gate_name in course.stage(name)["gate"]
         }
         self.assertEqual(required - metric_keys, set())
-        for name in course.order:
+        for name in course.all_order:
             stage = course.stage(name)
             if stage["terrain"]["kind"] != "flat":
                 continue
@@ -1288,7 +1857,7 @@ class ContractTests(unittest.TestCase):
                     "max_mean_settled_straight_wheel_speed_difference_mps",
                     stage["gate"],
                 )
-            else:
+            elif name != "flat_adaptive_speed":
                 self.assertIn(
                     "max_settled_straight_wheel_speed_difference_mps",
                     stage["gate"],
@@ -1296,11 +1865,12 @@ class ContractTests(unittest.TestCase):
             for legacy in (
                 "mean_height_tolerance_m",
                 "max_height_deviation_m",
-                "max_wheel_slip_mps",
                 "max_wheel_slip_fraction_of_peak",
                 "max_straight_wheel_speed_difference_mps",
             ):
                 self.assertNotIn(legacy, stage["gate"])
+            if not name.startswith("flat_turn_"):
+                self.assertNotIn("max_wheel_slip_mps", stage["gate"])
 
     def test_gate_scoring_and_best_selection(self):
         gate = load_course().stage("composite")["gate"]
@@ -1411,6 +1981,12 @@ class ContractTests(unittest.TestCase):
         )
         self.assertIn('add_argument("--fail-fast", action="store_true")', cli_source)
         self.assertIn('"--warm-start"', cli_source)
+        self.assertIn('choices=("main", "turning", "adaptive")', cli_source)
+        self.assertIn("turning course requires --warm-start or --resume", cli_source)
+        self.assertIn(
+            "adaptive course requires --warm-start with a compatible",
+            cli_source,
+        )
         self.assertIn("warm_start=args.warm_start", cli_source)
         self.assertIn('"--transfer"', cli_source)
         self.assertIn('"--initial-std"', cli_source)
@@ -1496,15 +2072,107 @@ class ContractTests(unittest.TestCase):
     def test_gpu_training_dependency_contract(self):
         root = Path(__file__).resolve().parents[1]
         project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        cli_source = (root / "diablo_training" / "cli.py").read_text(
+            encoding="utf-8"
+        )
         dependencies = " ".join(project["project"]["dependencies"]).lower()
         self.assertNotIn("baselines", dependencies)
         self.assertIn("mjlab==1.6.0", dependencies)
+        package_data = project["tool"]["setuptools"]["package-data"][
+            "diablo_training"
+        ]
+        self.assertIn("flat_turning_speed_stages.json", package_data)
+        self.assertIn("flat_adaptive_speed_stages.json", package_data)
+        self.assertIn("training_objectives.json", package_data)
+        self.assertIn(
+            "gpu_value = (\n        \"all\" if local_gpu_ids == \"all\" "
+            "else str(local_gpu_ids)\n    )",
+            cli_source,
+        )
+
+    def test_gpu_selection_uses_child_local_device_indices(self):
+        from diablo_training.cli import (
+            configure_cuda_visible_devices,
+            normalize_gpu_ids,
+        )
+
+        self.assertEqual(normalize_gpu_ids("1, 3"), [1, 3])
+        self.assertEqual(normalize_gpu_ids("[2]"), [2])
+        self.assertEqual(normalize_gpu_ids([1, 2]), [1, 2])
+        self.assertEqual(normalize_gpu_ids("all"), "all")
+        for value in ("", "-1", "1,1"):
+            with self.assertRaises(ValueError):
+                normalize_gpu_ids(value)
+
+        with patch.dict(
+            os.environ,
+            {"CUDA_VISIBLE_DEVICES": "unset"},
+        ):
+            self.assertEqual(
+                configure_cuda_visible_devices([1, 3]),
+                [0, 1],
+            )
+            self.assertEqual(
+                os.environ["CUDA_VISIBLE_DEVICES"],
+                "1,3",
+            )
+        with patch.dict(
+            os.environ,
+            {"CUDA_VISIBLE_DEVICES": "existing"},
+        ):
+            self.assertEqual(
+                configure_cuda_visible_devices("all"),
+                "all",
+            )
+            self.assertEqual(
+                os.environ["CUDA_VISIBLE_DEVICES"],
+                "existing",
+            )
 
 
 @unittest.skipUnless(
     DEPENDENCIES_AVAILABLE, "CPU MuJoCo/Gymnasium dependencies are not installed"
 )
 class WheelMappingTests(unittest.TestCase):
+    def test_yaw_target_uses_bounded_heading_feedback(self):
+        command_yaw = torch.tensor([0.0, 0.4, -0.4, 2.0])
+        heading_error = torch.tensor([0.1, -0.1, 0.1, 1.0])
+        target = closed_loop_yaw_target(
+            command_yaw,
+            heading_error,
+            gain=0.75,
+            correction_limit=0.2,
+        )
+        torch.testing.assert_close(
+            target,
+            torch.tensor([-0.075, 0.475, -0.475, 1.8]),
+            atol=1e-6,
+            rtol=0.0,
+        )
+
+    def test_wheel_residual_common_mode_is_limited_only_when_active(self):
+        residual = torch.tensor(
+            [[1.0, 0.2], [0.2, 1.0], [-1.0, -0.2]],
+            dtype=torch.float32,
+        )
+        effective, common, differential = decompose_wheel_residual(
+            residual,
+            common_limit=0.2,
+            active=torch.tensor([[False], [True], [True]]),
+        )
+        torch.testing.assert_close(
+            common,
+            torch.tensor([[0.6], [0.2], [-0.2]]),
+        )
+        torch.testing.assert_close(
+            differential,
+            torch.tensor([[0.4, -0.4], [-0.4, 0.4], [-0.4, 0.4]]),
+        )
+        torch.testing.assert_close(
+            effective,
+            torch.tensor([[1.0, 0.2], [-0.2, 0.6], [-0.6, 0.2]]),
+        )
+
     def test_residual_wheel_target_mapping_is_symmetric(self):
         commands = torch.tensor(
             [
@@ -1520,7 +2188,7 @@ class WheelMappingTests(unittest.TestCase):
             commands,
             zero,
             radius=0.1,
-            half_track=0.18755,
+            half_track=WHEEL_HALF_TRACK,
             feedforward_gain=1.0,
             yaw_feedforward_gain=1.0,
             residual_scale_rad_s=4.0,
@@ -1535,8 +2203,8 @@ class WheelMappingTests(unittest.TestCase):
             targets[2:],
             torch.tensor(
                 [
-                    [1.8755, -1.8755],
-                    [-1.8755, 1.8755],
+                    [2.4125, -2.4125],
+                    [-2.4125, 2.4125],
                 ]
             ),
             atol=1e-5,
@@ -1549,7 +2217,7 @@ class WheelMappingTests(unittest.TestCase):
             commands[:2],
             residual,
             radius=0.1,
-            half_track=0.18755,
+            half_track=WHEEL_HALF_TRACK,
             feedforward_gain=1.0,
             yaw_feedforward_gain=1.0,
             residual_scale_rad_s=4.0,
@@ -1560,6 +2228,45 @@ class WheelMappingTests(unittest.TestCase):
             atol=1e-5,
             rtol=0.0,
         )
+
+    def test_yaw_command_is_hard_limited_to_two_rad_per_second(self):
+        commands = torch.tensor(
+            [
+                [0.0, -2.5, 0.35],
+                [0.0, 2.5, 0.35],
+                [0.0, -2.0, 0.35],
+                [0.0, 2.0, 0.35],
+            ],
+            dtype=torch.float32,
+        )
+        targets = wheel_command_targets(
+            commands,
+            torch.zeros((4, 2), dtype=torch.float32),
+            radius=0.1,
+            half_track=WHEEL_HALF_TRACK,
+            feedforward_gain=1.0,
+            yaw_feedforward_gain=1.0,
+            residual_scale_rad_s=4.0,
+        )
+        torch.testing.assert_close(targets[0], targets[2])
+        torch.testing.assert_close(targets[1], targets[3])
+
+    def test_stage_wheel_speed_limit_clamps_targets(self):
+        commands = torch.tensor(
+            [[1.0, 1.2, 0.35]],
+            dtype=torch.float32,
+        )
+        targets = wheel_command_targets(
+            commands,
+            torch.ones((1, 2), dtype=torch.float32),
+            radius=0.1,
+            half_track=WHEEL_HALF_TRACK,
+            feedforward_gain=1.0,
+            yaw_feedforward_gain=1.0,
+            residual_scale_rad_s=4.0,
+            speed_limit=6.0,
+        )
+        self.assertLessEqual(float(targets.abs().max()), 6.0)
 
 
 @unittest.skipUnless(
@@ -1638,6 +2345,11 @@ class EnvironmentTests(unittest.TestCase):
         wheel_centres = env.data.xpos[wheel_ids]
         wheel_bottom = float((wheel_centres[:, 2] - 0.1).mean())
         self.assertAlmostEqual(wheel_bottom, 0.0, places=5)
+        self.assertAlmostEqual(
+            WHEEL_HALF_TRACK,
+            0.5 * abs(float(wheel_centres[0, 1] - wheel_centres[1, 1])),
+            places=5,
+        )
 
         base_geom = env.model.geom("diablo_base_link_visual_1")
         mesh_id = int(base_geom.dataid[0])

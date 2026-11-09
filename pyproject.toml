@@ -30,4 +30,4 @@ xingtian = "diablo_training.mjlab_tasks"
 include = ["diablo_training*"]
 
 [tool.setuptools.package-data]
-diablo_training = ["upstream.lock.json", "curriculum.json", "flat_motion_speed_stages.json"]
+diablo_training = ["upstream.lock.json", "curriculum.json", "flat_motion_speed_stages.json", "flat_turning_speed_stages.json", "flat_adaptive_speed_stages.json", "training_objectives.json"]

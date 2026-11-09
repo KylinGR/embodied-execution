@@ -5,6 +5,63 @@ import torch
 
 from .model import DEFAULT_Q, NO_LOAD_SPEED, OBSERVATION_SIGNS, STALL_TORQUE, WHEELS
 
+YAW_COMMAND_HARD_LIMIT_RAD_S = 2.0
+
+
+def closed_loop_yaw_target(
+    command_yaw: torch.Tensor,
+    heading_error: torch.Tensor,
+    *,
+    gain: float = 0.75,
+    correction_limit: float = 0.2,
+) -> torch.Tensor:
+    """Add bounded heading feedback to the open-loop yaw command."""
+    correction = torch.clamp(
+        -gain * heading_error,
+        -correction_limit,
+        correction_limit,
+    )
+    return torch.clamp(
+        command_yaw + correction,
+        -YAW_COMMAND_HARD_LIMIT_RAD_S,
+        YAW_COMMAND_HARD_LIMIT_RAD_S,
+    )
+
+
+def decompose_wheel_residual(
+    residual_action: torch.Tensor,
+    *,
+    common_limit: float | None = None,
+    active: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Split residual into common/differential parts with optional common cap."""
+    if residual_action.ndim != 2 or residual_action.shape[-1] != 2:
+        raise ValueError(
+            "residual_action must have shape [batch,2], got "
+            f"{tuple(residual_action.shape)}"
+        )
+    if common_limit is not None and not 0.0 <= common_limit <= 1.0:
+        raise ValueError("common_limit must be in [0,1] or None")
+    if active is not None and active.shape != (residual_action.shape[0], 1):
+        raise ValueError(
+            "active must have shape [batch,1], got "
+            f"{tuple(active.shape)}"
+        )
+    common = residual_action.mean(dim=-1, keepdim=True)
+    differential = residual_action - common
+    if common_limit is not None:
+        bounded_common = torch.clamp(
+            common,
+            -common_limit,
+            common_limit,
+        )
+        common = (
+            bounded_common
+            if active is None
+            else torch.where(active, bounded_common, common)
+        )
+    return common + differential, common, differential
+
 
 def wheel_command_targets(
     command: torch.Tensor,
@@ -16,6 +73,8 @@ def wheel_command_targets(
     yaw_feedforward_gain: float,
     residual_scale_rad_s: float,
     speed_limit: float = NO_LOAD_SPEED,
+    common_residual_limit: float | None = None,
+    common_residual_turn_threshold: float = 0.05,
 ) -> torch.Tensor:
     """Map forward/yaw commands and two residual actions to wheel velocities."""
     if command.ndim != 2 or command.shape[-1] != 3:
@@ -29,19 +88,33 @@ def wheel_command_targets(
         )
     if radius <= 0.0 or half_track < 0.0 or residual_scale_rad_s < 0.0:
         raise ValueError("Wheel geometry and residual scale must be valid")
+    if speed_limit <= 0.0:
+        raise ValueError("speed_limit must be positive")
+    if common_residual_turn_threshold < 0.0:
+        raise ValueError("common residual turn threshold must be nonnegative")
 
     command = command.to(
         device=residual_action.device,
         dtype=residual_action.dtype,
     )
     forward = command[:, 0]
-    yaw = command[:, 1]
+    yaw = command[:, 1].clamp(
+        -YAW_COMMAND_HARD_LIMIT_RAD_S,
+        YAW_COMMAND_HARD_LIMIT_RAD_S,
+    )
     left_speed = forward - yaw_feedforward_gain * yaw * half_track
     right_speed = forward + yaw_feedforward_gain * yaw * half_track
     nominal = -feedforward_gain * torch.stack(
         (left_speed, right_speed), dim=-1
     ) / radius
-    target = nominal - residual_scale_rad_s * residual_action
+    effective_residual, _, _ = decompose_wheel_residual(
+        residual_action,
+        common_limit=common_residual_limit,
+        active=(
+            command[:, 1].abs() > common_residual_turn_threshold
+        ).unsqueeze(-1),
+    )
+    target = nominal - residual_scale_rad_s * effective_residual
     return torch.clamp(target, -speed_limit, speed_limit)
 
 

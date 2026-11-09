@@ -20,6 +20,9 @@ from .contract import (
     checkpoint_interval,
     load_course,
     load_run_contract,
+    profile_task_type,
+    resolved_profile_gate,
+    stage_profiles,
     task_id,
 )
 from .resources import ROOT, fetch
@@ -53,6 +56,41 @@ def versions() -> dict[str, str]:
         except importlib.metadata.PackageNotFoundError:
             result[name] = "not-installed"
     return result
+
+
+def normalize_gpu_ids(value: list[int] | str) -> list[int] | str:
+    """Normalize a CLI/API GPU selection without initializing CUDA."""
+    if value == "all":
+        return "all"
+    try:
+        if isinstance(value, str):
+            values = [
+                int(token.strip())
+                for token in value.strip("[]").split(",")
+                if token.strip()
+            ]
+        else:
+            values = [int(item) for item in value]
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"Invalid --gpu-ids: {error}") from error
+    if not values:
+        raise ValueError("--gpu-ids must contain at least one GPU")
+    if any(gpu_id < 0 for gpu_id in values):
+        raise ValueError("--gpu-ids values must be nonnegative")
+    if len(values) != len(set(values)):
+        raise ValueError("--gpu-ids values must be unique")
+    return values
+
+
+def configure_cuda_visible_devices(
+    gpu_ids: list[int] | str,
+) -> list[int] | str:
+    """Mask selected physical GPUs and return their child-local indices."""
+    normalized = normalize_gpu_ids(gpu_ids)
+    if normalized == "all":
+        return "all"
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, normalized))
+    return list(range(len(normalized)))
 
 
 def doctor(args) -> None:
@@ -145,8 +183,14 @@ def gpu_doctor(args) -> None:
 
 def list_stages(args) -> None:
     course = load_course()
+    if args.course == "main":
+        names = course.order
+    elif args.course == "turning":
+        names = course.turn_order
+    else:
+        names = course.adaptive_order
     stages = []
-    for order, name in enumerate(course.order):
+    for order, name in enumerate(names):
         stage = course.stage(name)
         stages.append(
             {
@@ -158,10 +202,35 @@ def list_stages(args) -> None:
                     int(stage["budget"]), args.n_envs
                 ),
                 "profiles": [profile["name"] for profile in stage["profiles"]],
+                "task_types": [
+                    profile_task_type(name, stage, profile)
+                    for profile in stage["profiles"]
+                ],
                 "terrain": stage["terrain"]["kind"],
             }
         )
-    print(json.dumps({"n_envs": args.n_envs, "stages": stages}, indent=2))
+    print(
+        json.dumps(
+            {"course": args.course, "n_envs": args.n_envs, "stages": stages},
+            indent=2,
+        )
+    )
+
+
+def show_objectives(_args) -> None:
+    print(json.dumps(load_course().objectives, indent=2, ensure_ascii=False))
+
+
+def validate_config(_args) -> None:
+    course = load_course()
+    report = {}
+    for name in course.stages:
+        stage = course.stage(name)
+        report[name] = {
+            profile["name"]: resolved_profile_gate(course, name, profile)
+            for profile in stage_profiles(stage, profile_set="all")
+        }
+    print(json.dumps(report, indent=2, ensure_ascii=False))
 
 
 def smoke(args) -> None:
@@ -272,6 +341,7 @@ def train_stage(
     warm_start_initial_std: float | None = None,
     critic_calibration_steps: int = 0,
 ) -> Path:
+    local_gpu_ids = configure_cuda_visible_devices(gpu_ids)
     from .mjlab_tasks import (
         create_actor_initial_checkpoint,
         latest_run,
@@ -286,6 +356,15 @@ def train_stage(
     course = load_course()
     if stage not in course.stages:
         raise ValueError(f"Unknown stage '{stage}'")
+    if (
+        stage == "flat_adaptive_speed"
+        and resume is None
+        and warm_start is None
+    ):
+        raise ValueError(
+            "flat_adaptive_speed requires --warm-start with a compatible "
+            "checkpoint or --resume"
+        )
     iterations = (
         iterations_override
         if iterations_override is not None
@@ -297,8 +376,6 @@ def train_stage(
         warm_start = warm_start.resolve()
         if not warm_start.is_file():
             raise FileNotFoundError(warm_start)
-        if gpu_ids != "all":
-            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
         from .contract import load_warm_start_contract
 
         source_contract_path = warm_start.parent / "contract.json"
@@ -326,7 +403,9 @@ def train_stage(
             critic_calibration_steps=critic_calibration_steps,
             source_stage=source_contract.get("stage"),
         )
-    gpu_value = "all" if gpu_ids == "all" else str(list(gpu_ids))
+    gpu_value = (
+        "all" if local_gpu_ids == "all" else str(local_gpu_ids)
+    )
     command = [
         sys.executable,
         "-m",
@@ -375,8 +454,7 @@ def initialize_actor(args) -> None:
     course = load_course()
     if args.stage not in course.stages:
         raise ValueError(f"Unknown stage '{args.stage}'")
-    if args.gpu_ids != "all":
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, args.gpu_ids))
+    configure_cuda_visible_devices(args.gpu_ids)
     from .mjlab_tasks import create_actor_initial_checkpoint
 
     iterations = budget_iterations(
@@ -428,6 +506,10 @@ def evaluate_policy(args) -> None:
         seeds,
         device=device,
         fail_fast=args.fail_fast,
+        profile_set=args.profile_set,
+        evaluation_mode=args.eval_mode,
+        eval_envs=args.eval_envs,
+        include_raw_runs=args.write_raw,
     )
     out = fresh_directory(args.output, "evaluate")
     write_json(out / "result.json", result)
@@ -463,9 +545,18 @@ def train(args) -> None:
 def course_train(args) -> None:
     course = load_course()
     resume = args.resume
-    warm_start = None
+    warm_start = args.warm_start
     final_run = None
-    for stage in course.order:
+    stage_order = (
+        course.order
+        if args.course == "main"
+        else (
+            course.turn_order
+            if args.course == "turning"
+            else course.adaptive_order
+        )
+    )
+    for stage in stage_order:
         run_dir = train_stage(
             stage,
             args.n_envs,
@@ -478,7 +569,7 @@ def course_train(args) -> None:
             critic_calibration_steps=args.critic_calibration_steps,
         )
         checkpoint = _latest_checkpoint(run_dir)
-        if stage != "composite":
+        if args.course != "main" or stage != "composite":
             result = evaluate_policy_result(stage, checkpoint, SCREEN_SEEDS, args)
             gate_out = fresh_directory(
                 args.output / stage if args.output else None, "gate"
@@ -493,11 +584,24 @@ def course_train(args) -> None:
         final_run = run_dir
         print(
             f"[course] {stage}: "
-            f"{'TRAINED' if stage == 'composite' else 'PASS'} -> {run_dir}"
+            f"{'TRAINED' if args.course == 'main' and stage == 'composite' else 'PASS'} "
+            f"-> {run_dir}"
         )
     if final_run is None:
-        raise RuntimeError("No final composite run was produced")
-    select(args, run_dir=final_run)
+        raise RuntimeError("No final course run was produced")
+    if args.course == "main":
+        select(args, run_dir=final_run, stage="composite")
+    else:
+        print(
+            json.dumps(
+                {
+                    "course": args.course,
+                    "run": str(final_run),
+                    "checkpoint": str(_latest_checkpoint(final_run)),
+                },
+                ensure_ascii=False,
+            )
+        )
 
 
 def evaluate_policy_result(
@@ -505,14 +609,30 @@ def evaluate_policy_result(
 ) -> dict:
     from .mjlab_tasks import evaluate_checkpoint
 
-    return evaluate_checkpoint(stage, checkpoint, seeds, device=args.device)
+    return evaluate_checkpoint(
+        stage,
+        checkpoint,
+        seeds,
+        device=args.device,
+        evaluation_mode="fast",
+        eval_envs=getattr(args, "eval_envs", 0),
+    )
 
 
-def select(args, run_dir: Path | None = None) -> None:
+def select(
+    args,
+    run_dir: Path | None = None,
+    stage: str | None = None,
+) -> None:
     from .mjlab_tasks import require_cuda, select_policy_best
 
     require_cuda(args.device)
-    result = select_policy_best(run_dir or args.run_dir, device=args.device)
+    result = select_policy_best(
+        run_dir or args.run_dir,
+        device=args.device,
+        stage_name=stage or args.stage,
+        eval_envs=getattr(args, "eval_envs", 0),
+    )
     print(
         json.dumps(
             {
@@ -559,6 +679,13 @@ def main() -> int:
 
     stages = commands.add_parser("list-stages")
     stages.add_argument("--n-envs", type=int, default=4096)
+    stages.add_argument(
+        "--course",
+        choices=("main", "turning", "adaptive"),
+        default="main",
+    )
+    commands.add_parser("show-objectives", help="Print centralized curriculum limits")
+    commands.add_parser("validate-config", help="Resolve and validate every stage gate")
 
     smoke_parser = commands.add_parser("smoke")
     smoke_parser.add_argument("--stage", default="flat_balance")
@@ -613,7 +740,13 @@ def main() -> int:
     course_parser = commands.add_parser("course-train")
     course_parser.add_argument("--n-envs", type=int, default=4096)
     course_parser.add_argument("--log-root", type=Path, default=Path("logs/rsl_rl"))
+    course_parser.add_argument(
+        "--course",
+        choices=("main", "turning", "adaptive"),
+        default="main",
+    )
     course_parser.add_argument("--resume", type=Path)
+    course_parser.add_argument("--warm-start", type=Path)
     course_parser.add_argument("--gpu-ids", default="0")
     course_parser.add_argument("--device", default="cuda:0")
     course_parser.add_argument("--output", type=Path)
@@ -636,10 +769,24 @@ def main() -> int:
     evaluate_parser.add_argument("--device", default="cuda:0")
     evaluate_parser.add_argument("--fail-fast", action="store_true")
     evaluate_parser.add_argument("--output", type=Path)
+    evaluate_parser.add_argument(
+        "--profile-set",
+        choices=("required", "all", "baseline", "target", "diagnostic"),
+        default="required",
+    )
+    evaluate_parser.add_argument(
+        "--eval-mode",
+        choices=("fast", "exact"),
+        default="exact",
+    )
+    evaluate_parser.add_argument("--eval-envs", type=int, default=0)
+    evaluate_parser.add_argument("--write-raw", action="store_true")
 
     select_parser = commands.add_parser("select-best")
     select_parser.add_argument("--run-dir", type=Path, required=True)
+    select_parser.add_argument("--stage", default="composite")
     select_parser.add_argument("--device", default="cuda:0")
+    select_parser.add_argument("--eval-envs", type=int, default=0)
 
     export_parser = commands.add_parser("export")
     export_parser.add_argument("--stage", required=True)
@@ -670,6 +817,41 @@ def main() -> int:
     ):
         parser.error("--resume and --warm-start are mutually exclusive")
     if (
+        args.command == "course-train"
+        and args.resume is not None
+        and args.warm_start is not None
+    ):
+        parser.error("--resume and --warm-start are mutually exclusive")
+    if (
+        args.command == "course-train"
+        and args.course == "turning"
+        and args.resume is None
+        and args.warm_start is None
+    ):
+        parser.error(
+            "turning course requires --warm-start or --resume"
+        )
+    if (
+        args.command == "train"
+        and args.stage == "flat_adaptive_speed"
+        and args.resume is None
+        and args.warm_start is None
+    ):
+        parser.error(
+            "flat_adaptive_speed requires --warm-start with a compatible "
+            "checkpoint or --resume"
+        )
+    if (
+        args.command == "course-train"
+        and args.course == "adaptive"
+        and args.resume is None
+        and args.warm_start is None
+    ):
+        parser.error(
+            "adaptive course requires --warm-start with a compatible "
+            "checkpoint or --resume"
+        )
+    if (
         args.command == "train"
         and args.warm_start is None
         and (
@@ -683,21 +865,19 @@ def main() -> int:
             "require --warm-start"
         )
 
-    if hasattr(args, "gpu_ids") and args.gpu_ids != "all":
+    if hasattr(args, "gpu_ids"):
         try:
-            args.gpu_ids = [
-                int(value.strip())
-                for value in str(args.gpu_ids).strip("[]").split(",")
-                if value.strip()
-            ]
+            args.gpu_ids = normalize_gpu_ids(args.gpu_ids)
         except ValueError as error:
-            parser.error(f"Invalid --gpu-ids: {error}")
+            parser.error(str(error))
 
     functions = {
         "fetch": lambda _: fetch(),
         "doctor": doctor,
         "gpu-doctor": gpu_doctor,
         "list-stages": list_stages,
+        "show-objectives": show_objectives,
+        "validate-config": validate_config,
         "smoke": smoke,
         "convert-actor": convert_actor,
         "init-actor": initialize_actor,

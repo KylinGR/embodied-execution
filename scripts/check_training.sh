@@ -7,6 +7,7 @@ run_dir="$(mktemp -d "$PWD/runs/check-$(date -u +%Y%m%dT%H%M%S)-XXXXXX")"
 
 "$python_bin" -m compileall -q diablo_training tests
 "$python_bin" -m unittest discover -s tests -v 2>&1 | tee "$run_dir/tests.log"
+"$python_bin" -m diablo_training.cli validate-config > "$run_dir/gates.json"
 "$python_bin" -m diablo_training.cli doctor > "$run_dir/doctor.json"
 "$python_bin" -m diablo_training.contract > "$run_dir/course-contract.json"
 
@@ -21,6 +22,16 @@ if [[ "${DIABLO_GPU_CHECK:-0}" == "1" ]]; then
   checkpoint="$(find "$run_dir/logs/rsl_rl/diablo_xingtian_course" \
     -type f -name 'model_*.pt' | sort | tail -n 1)"
   test -n "$checkpoint"
+  fast_evaluation_status=0
+  "$python_bin" -m diablo_training.cli evaluate \
+    --stage flat_balance --checkpoint "$checkpoint" --seeds 2001 \
+    --eval-mode fast --eval-envs 4 \
+    --output "$run_dir/evaluate-fast" > "$run_dir/evaluate-fast.log" \
+    || fast_evaluation_status=$?
+  if [[ "$fast_evaluation_status" != 0 && "$fast_evaluation_status" != 2 ]]; then
+    printf 'GPU fast evaluation infrastructure failed; evidence: %s\n' "$run_dir" >&2
+    exit "$fast_evaluation_status"
+  fi
   evaluation_status=0
   "$python_bin" -m diablo_training.cli evaluate \
     --stage flat_balance --checkpoint "$checkpoint" --seeds 2001 \

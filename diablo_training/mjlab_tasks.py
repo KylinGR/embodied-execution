@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import time
 import uuid
 from typing import Any
 
@@ -59,6 +60,7 @@ from mjlab.utils.spec import create_motor_actuator
 from mjlab.utils.spec_config import CollisionCfg
 from mjlab.viewer import ViewerConfig
 
+from .adaptive_grid import AdaptiveGrid
 from .contract import (
     ACTION_DTYPE,
     ACTION_SHAPE,
@@ -81,12 +83,21 @@ from .contract import (
     interface_contract,
     load_run_contract,
     load_course,
+    metric_name,
+    profile_task_type,
+    ppo_defaults_for_stage,
     rank_policy_candidates,
+    resolved_profile_gate,
+    resolved_task_gate,
     reward_defaults_for_stage,
     sha256,
+    stage_profiles,
     stage_training_contract,
+    task_id,
+    training_profile_schedule,
 )
-from .control import wheel_command_targets
+from .control import closed_loop_yaw_target, wheel_command_targets
+from .evaluation import run_exact_seed, run_vector_seed
 from .model import (
     CONTROL_DT,
     DEFAULT_Q,
@@ -101,14 +112,15 @@ from .model import (
     PHYSICS_DT,
     RATED_TORQUE,
     STALL_TORQUE,
+    WHEEL_HALF_TRACK,
     make_robot_spec,
 )
 
 COURSE = load_course()
 COURSE_HEIGHT_SCALE = 3.0
 WHEEL_RADIUS = 0.1
-WHEEL_HALF_TRACK = 0.18755
 POLICY_CLASS = "diablo_training.policies:XingtianSequenceModel"
+SELECTION_MIN_EVAL_ENVS = 512
 GAIT_JOINTS = ("left_hip_motor", "left_knee_motor", "right_hip_motor", "right_knee_motor")
 WHEEL_JOINTS = ("left_wheel_motor", "right_wheel_motor")
 PASSIVE_JOINTS = (
@@ -121,6 +133,58 @@ KNEE_JOINTS = ("left_knee_motor", "right_knee_motor")
 
 
 class XingtianOnPolicyRunner(MjlabOnPolicyRunner):
+    TURN_MAX_LEARNING_RATE = 1e-3
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._bind_log_dir_to_env()
+        run_name = str(self.cfg.get("run_name", ""))
+        max_learning_rate = None
+        if run_name in COURSE.stages:
+            effective_ppo = ppo_defaults_for_stage(COURSE, run_name)
+            effective_ppo.update(COURSE.stage(run_name).get("ppo", {}))
+            configured = effective_ppo.get("max_learning_rate")
+            if configured is not None:
+                max_learning_rate = float(configured)
+        if max_learning_rate is None and run_name.startswith("flat_turn_"):
+            max_learning_rate = self.TURN_MAX_LEARNING_RATE
+        if max_learning_rate is not None:
+            if max_learning_rate <= 0.0:
+                raise ValueError("max_learning_rate must be positive")
+            self._install_learning_rate_cap(max_learning_rate)
+
+    def _bind_log_dir_to_env(self) -> None:
+        log_dir = getattr(self, "log_dir", None)
+        if log_dir is None:
+            log_dir = getattr(getattr(self, "writer", None), "log_dir", None)
+        if not log_dir:
+            return
+        env = getattr(self, "env", None)
+        unwrapped = getattr(env, "unwrapped", env)
+        for target in (unwrapped, getattr(unwrapped, "cfg", None)):
+            if target is not None:
+                setattr(target, "log_dir", str(log_dir))
+
+    def _install_learning_rate_cap(self, max_learning_rate: float) -> None:
+        optimizer = self.alg.optimizer
+        original_step = optimizer.step
+
+        def capped_step(*step_args, **step_kwargs):
+            for group in optimizer.param_groups:
+                group["lr"] = min(float(group["lr"]), max_learning_rate)
+            self.alg.learning_rate = min(
+                float(self.alg.learning_rate),
+                max_learning_rate,
+            )
+            result = original_step(*step_args, **step_kwargs)
+            self.alg.learning_rate = min(
+                float(self.alg.learning_rate),
+                max_learning_rate,
+            )
+            return result
+
+        optimizer.step = capped_step
+
     def export_policy_to_onnx(
         self,
         path: str,
@@ -285,6 +349,9 @@ class WheelPiActuator(Actuator):
 class XingtianActionCfg(ActionTermCfg):
     leg_scale: float = 0.5
     wheel_residual_scale_rad_s: float = 4.0
+    wheel_speed_target_max_rad_s: float = NO_LOAD_SPEED
+    wheel_common_residual_limit_fraction: float | None = None
+    wheel_common_residual_turn_threshold: float = 0.05
     wheel_velocity_feedforward_gain: float = 1.0
     wheel_yaw_feedforward_gain: float = 1.0
     wheel_half_track_m: float = WHEEL_HALF_TRACK
@@ -375,18 +442,32 @@ class XingtianAction(ActionTerm):
         )
         leg_target[:, 1::2] += knee_pos_ff
         command = self._env.command_manager.get_command("course")
+        command_term: CourseCommand = self._env.command_manager.get_term(
+            "course"
+        )
+        effective_command = command.clone()
+        effective_command[:, 1] = command_term.yaw_target
         command_vx = command[:, 0]
         wheel_target = wheel_command_targets(
-            command,
+            effective_command,
             self._raw[:, self._wheel_channels],
             radius=WHEEL_RADIUS,
             half_track=self.cfg.wheel_half_track_m,
             feedforward_gain=self.cfg.wheel_velocity_feedforward_gain,
             yaw_feedforward_gain=self.cfg.wheel_yaw_feedforward_gain,
             residual_scale_rad_s=self.cfg.wheel_residual_scale_rad_s,
+            speed_limit=self.cfg.wheel_speed_target_max_rad_s,
+            common_residual_limit=(
+                self.cfg.wheel_common_residual_limit_fraction
+            ),
+            common_residual_turn_threshold=(
+                self.cfg.wheel_common_residual_turn_threshold
+            ),
         )
-        standing_command = (command_vx.abs() <= 1e-6) & (
-            command[:, 1].abs() <= 1e-6
+        standing_command = (
+            (command_vx.abs() <= 1e-6)
+            & (command[:, 1].abs() <= 1e-6)
+            & (effective_command[:, 1].abs() <= 1e-4)
         )
         if self.cfg.standing_wheel_target_cap_rad_s > 0.0:
             cap = abs(self.cfg.standing_wheel_target_cap_rad_s)
@@ -430,6 +511,8 @@ class XingtianAction(ActionTerm):
 class CourseCommandCfg(CommandTermCfg):
     stage_name: str
     profile_index: int | None = None
+    profile_sequence: tuple[int, ...] | None = None
+    include_training_profiles: bool = False
     base_height_m: float = TARGET_BASE_HEIGHT_M
 
     def build(self, env: ManagerBasedRlEnv) -> CourseCommand:
@@ -442,16 +525,73 @@ class CourseCommand(CommandTerm):
     def __init__(self, cfg: CourseCommandCfg, env: ManagerBasedRlEnv):
         super().__init__(cfg, env)
         self.stage = COURSE.stage(cfg.stage_name)
-        self.profiles = self.stage["profiles"]
+        evaluation_profiles = self.stage["profiles"]
+        training_profiles = self.stage.get("training_profiles", ())
+        available_profiles = (
+            [*evaluation_profiles, *training_profiles]
+            if cfg.include_training_profiles
+            else evaluation_profiles
+        )
         if cfg.profile_index is not None and not 0 <= cfg.profile_index < len(
-            self.profiles
+            available_profiles
         ):
             raise ValueError("profile_index is outside the stage profile list")
+        self.profiles = available_profiles
+        self._profile_peak_speed = torch.tensor(
+            [
+                max(abs(float(point[1])) for point in profile["points"])
+                for profile in self.profiles
+            ],
+            device=self.device,
+        )
+        if cfg.profile_sequence is not None and len(cfg.profile_sequence) != self.num_envs:
+            raise ValueError("profile_sequence length must equal num_envs")
+        grid_cfg = self.stage.get("adaptive_grid")
+        self._grid = (
+            AdaptiveGrid(grid_cfg)
+            if grid_cfg is not None
+            and cfg.profile_index is None
+            and cfg.profile_sequence is None
+            else None
+        )
+        self._grid_commands = torch.zeros((self.num_envs, 2), device=self.device)
+        self._grid_modes = torch.zeros(
+            self.num_envs, dtype=torch.long, device=self.device
+        )
+        self._grid_durations = torch.zeros(self.num_envs, device=self.device)
+        self._grid_speed_error = torch.zeros(self.num_envs, device=self.device)
+        self._grid_yaw_error = torch.zeros(self.num_envs, device=self.device)
+        self._grid_steps = torch.zeros(self.num_envs, device=self.device)
+        self._grid_heading = torch.zeros(self.num_envs, device=self.device)
+        self._grid_cell_keys: list[tuple[int, int] | None] = [None] * self.num_envs
+        schedule = (
+            training_profile_schedule(self.stage)
+            if cfg.include_training_profiles and cfg.profile_index is None
+            else ()
+        )
+        if schedule:
+            profile_indices = {
+                profile["name"]: index
+                for index, profile in enumerate(self.profiles)
+            }
+            self._training_schedule: torch.Tensor | None = torch.tensor(
+                [profile_indices[name] for name in schedule],
+                dtype=torch.long,
+                device=self.device,
+            )
+        else:
+            self._training_schedule = None
         self.robot: Entity = env.scene["robot"]
+        self.defaults = reward_defaults_for_stage(COURSE, cfg.stage_name)
         self.command_b = torch.zeros((self.num_envs, 3), device=self.device)
         self.command_b[:, 2] = cfg.base_height_m
         self.profile_ids = torch.zeros(
             self.num_envs, dtype=torch.long, device=self.device
+        )
+        self._profile_sequence = (
+            torch.tensor(cfg.profile_sequence, dtype=torch.long, device=self.device)
+            if cfg.profile_sequence is not None
+            else None
         )
         self.start_pos = torch.zeros((self.num_envs, 3), device=self.device)
         self.start_heading = torch.zeros(self.num_envs, device=self.device)
@@ -493,8 +633,140 @@ class CourseCommand(CommandTerm):
     def command(self) -> torch.Tensor:
         return self.command_b
 
+    @property
+    def profile_names(self) -> tuple[str, ...]:
+        if self._grid is not None:
+            return ("balance", "straight", "in_place_turn", "moving_turn")
+        return tuple(str(profile["name"]) for profile in self.profiles)
+
+    @property
+    def command_peak_speed(self) -> torch.Tensor:
+        if self._grid is not None:
+            return self._grid_commands[:, 0].abs()
+        return self._profile_peak_speed[self.profile_ids]
+
+    @property
+    def profile_duration(self) -> torch.Tensor:
+        if self._grid is not None:
+            return self._grid_durations
+        return torch.tensor(
+            [float(profile["points"][-1][0]) for profile in self.profiles],
+            device=self.device,
+        )[self.profile_ids]
+
+    @property
+    def adaptive_grid(self) -> AdaptiveGrid | None:
+        return self._grid
+
+    @property
+    def heading_error(self) -> torch.Tensor:
+        heading = self.robot.data.heading_w
+        return torch.atan2(
+            torch.sin(heading - self.target_heading),
+            torch.cos(heading - self.target_heading),
+        )
+
+    @property
+    def yaw_target(self) -> torch.Tensor:
+        gain = max(float(self.defaults.get("heading_yaw_gain", 0.0)), 0.0)
+        limit = max(
+            float(
+                self.defaults.get(
+                    "heading_yaw_correction_limit_rad_s",
+                    0.0,
+                )
+            ),
+            0.0,
+        )
+        target = closed_loop_yaw_target(
+            self.command_b[:, 1],
+            self.heading_error,
+            gain=gain,
+            correction_limit=limit,
+        )
+        stage_yaw_limit = self.stage.get("limits", {}).get("yaw")
+        if stage_yaw_limit is not None:
+            target = target.clamp(
+                -float(stage_yaw_limit),
+                float(stage_yaw_limit),
+            )
+        return target
+
     def _resample_command(self, env_ids: torch.Tensor) -> None:
-        if self.cfg.profile_index is None:
+        if self._grid is not None:
+            keys = self._grid.sample_cell_keys(len(env_ids))
+            if len(keys) != len(env_ids):
+                raise RuntimeError(
+                    "adaptive sampler and environment reset sizes differ: "
+                    f"{len(keys)} cells for {len(env_ids)} envs"
+                )
+            cells = self._grid.cells_for_keys(keys)
+            bounds = torch.tensor(
+                [(*cell.vx_bounds, *cell.wz_bounds) for cell in cells],
+                dtype=torch.float,
+                device=self.device,
+            )
+            samples = torch.rand((len(env_ids), 2), device=self.device)
+            vx = bounds[:, 0] + samples[:, 0] * (bounds[:, 1] - bounds[:, 0])
+            wz = bounds[:, 2] + samples[:, 1] * (bounds[:, 3] - bounds[:, 2])
+            modes = torch.tensor(
+                [
+                    {
+                        "balance": 0,
+                        "straight": 1,
+                        "in_place_turn": 2,
+                        "moving_turn": 3,
+                    }[cell.mode]
+                    for cell in cells
+                ],
+                dtype=torch.long,
+                device=self.device,
+            )
+            vx = torch.where(modes == 0, torch.zeros_like(vx), vx)
+            vx = torch.where(modes == 2, torch.zeros_like(vx), vx)
+            wz = torch.where(modes == 0, torch.zeros_like(wz), wz)
+            radius_min = float(self.stage["adaptive_grid"]["min_turn_radius_m"])
+            radius_max = float(self.stage["adaptive_grid"]["max_turn_radius_m"])
+            moving = modes == 3
+            moving_vx_cap = float(
+                self.stage["adaptive_grid"][
+                    "target_moving_turn_speed_max_mps"
+                ]
+            )
+            vx = torch.where(
+                moving,
+                vx.clamp(-moving_vx_cap, moving_vx_cap),
+                vx,
+            )
+            yaw_sign = torch.where(wz < 0.0, -torch.ones_like(wz), torch.ones_like(wz))
+            min_yaw = vx.abs() / radius_max
+            max_yaw = vx.abs() / radius_min
+            safe_yaw = torch.clamp(wz.abs(), min=min_yaw, max=max_yaw)
+            wz = torch.where(moving, yaw_sign * safe_yaw, wz)
+            self._grid_commands[env_ids, 0] = vx
+            self._grid_commands[env_ids, 1] = wz
+            self._grid_modes[env_ids] = modes
+            self._grid_durations[env_ids] = torch.tensor(
+                [cell.duration_s for cell in cells],
+                dtype=torch.float,
+                device=self.device,
+            )
+            self._grid_speed_error[env_ids] = 0.0
+            self._grid_yaw_error[env_ids] = 0.0
+            self._grid_steps[env_ids] = 0.0
+            self._grid_heading[env_ids] = 0.0
+            for env_id, key in zip(env_ids.tolist(), keys):
+                self._grid_cell_keys[env_id] = key
+            self.profile_ids[env_ids] = modes
+        elif self._profile_sequence is not None:
+            self.profile_ids[env_ids] = self._profile_sequence[env_ids]
+        elif self._training_schedule is not None:
+            schedule_ids = torch.remainder(
+                env_ids + self._env.common_step_counter,
+                len(self._training_schedule),
+            )
+            self.profile_ids[env_ids] = self._training_schedule[schedule_ids]
+        elif self.cfg.profile_index is None:
             self.profile_ids[env_ids] = torch.remainder(
                 env_ids + self._env.common_step_counter, len(self.profiles)
             )
@@ -506,18 +778,23 @@ class CourseCommand(CommandTerm):
         length = float(terrain.get("length_m", 0.0))
         origins = self._env.scene.env_origins[env_ids]
         poses = self.robot.data.root_link_pose_w[env_ids].clone()
-        start_offsets = torch.tensor(
-            [
-                0.75
-                if profile.get("start") != "end"
-                else min(
-                    max(1.0, _planned_forward_distance(profile) + 1.0),
-                    max(1.0, length - 1.0),
-                )
-                for profile in self.profiles
-            ],
-            device=self.device,
-        )[self.profile_ids[env_ids]]
+        if self._grid is not None:
+            start_offsets = torch.full(
+                (len(env_ids),), 0.75, device=self.device
+            )
+        else:
+            start_offsets = torch.tensor(
+                [
+                    0.75
+                    if profile.get("start") != "end"
+                    else min(
+                        max(1.0, _planned_forward_distance(profile) + 1.0),
+                        max(1.0, length - 1.0),
+                    )
+                    for profile in self.profiles
+                ],
+                device=self.device,
+            )[self.profile_ids[env_ids]]
         poses[:, 0] = origins[:, 0] + start_offsets
         poses[:, 1] = origins[:, 1]
         poses[:, 2] = origins[:, 2] + RESET_BASE_HEIGHT_M
@@ -547,30 +824,199 @@ class CourseCommand(CommandTerm):
     def _set_commands(self, env_ids: torch.Tensor | None = None) -> None:
         ids = torch.arange(self.num_envs, device=self.device) if env_ids is None else env_ids
         seconds = self._env.episode_length_buf[ids].float() * self._env.step_dt
-        values = torch.zeros((len(ids), 2), device=self.device)
-        heading_offsets = torch.zeros(len(ids), device=self.device)
-        for profile_index, ((times, linear, yaw), heading_table) in enumerate(
-            zip(self._profile_tables, self._heading_tables, strict=True)
-        ):
-            mask = self.profile_ids[ids] == profile_index
-            local_time = seconds[mask]
-            right = torch.searchsorted(times, local_time, right=True).clamp(
-                1, len(times) - 1
-            )
-            left = right - 1
-            span = (times[right] - times[left]).clamp(min=1e-9)
-            blend = ((local_time - times[left]) / span).clamp(0.0, 1.0)
-            values[mask, 0] = linear[left] + blend * (linear[right] - linear[left])
-            values[mask, 1] = yaw[left] + blend * (yaw[right] - yaw[left])
-            heading_offsets[mask] = heading_table[left] + blend * (
-                heading_table[right] - heading_table[left]
-            )
+        if self._grid is not None:
+            values = self._adaptive_commands(ids, seconds)
+            yaw = values[:, 1]
+            if env_ids is None:
+                self._grid_heading[ids] += yaw * self._env.step_dt
+            heading_offsets = self._grid_heading[ids]
+        else:
+            values = torch.zeros((len(ids), 2), device=self.device)
+            heading_offsets = torch.zeros(len(ids), device=self.device)
+            for (
+                profile_index,
+                ((times, linear, yaw), heading_table),
+            ) in enumerate(
+                zip(self._profile_tables, self._heading_tables, strict=True)
+            ):
+                mask = self.profile_ids[ids] == profile_index
+                local_time = seconds[mask]
+                right = torch.searchsorted(
+                    times,
+                    local_time,
+                    right=True,
+                ).clamp(1, len(times) - 1)
+                left = right - 1
+                span = (times[right] - times[left]).clamp(min=1e-9)
+                blend = ((local_time - times[left]) / span).clamp(0.0, 1.0)
+                values[mask, 0] = linear[left] + blend * (
+                    linear[right] - linear[left]
+                )
+                values[mask, 1] = yaw[left] + blend * (
+                    yaw[right] - yaw[left]
+                )
+                heading_offsets[mask] = heading_table[left] + blend * (
+                    heading_table[right] - heading_table[left]
+                )
         self.command_b[ids, :2] = values
         self.command_b[ids, 2] = self.cfg.base_height_m
         self.target_heading[ids] = self.start_heading[ids] + heading_offsets
 
+    def _adaptive_commands(
+        self, ids: torch.Tensor, seconds: torch.Tensor
+    ) -> torch.Tensor:
+        target = self._grid_commands[ids]
+        mode = self._grid_modes[ids]
+        values = torch.zeros_like(target)
+
+        straight = mode == 1
+        speed = target[:, 0]
+        values[straight, 0] = torch.where(
+            seconds[straight] < 2.0,
+            torch.zeros_like(seconds[straight]),
+            torch.where(
+                seconds[straight] < 6.0,
+                speed[straight] * (seconds[straight] - 2.0) / 4.0,
+                torch.where(
+                    seconds[straight] < 14.0,
+                    speed[straight],
+                    torch.where(
+                        seconds[straight] < 18.0,
+                        speed[straight] * (18.0 - seconds[straight]) / 4.0,
+                        torch.zeros_like(seconds[straight]),
+                    ),
+                ),
+            ),
+        )
+
+        in_place = mode == 2
+        yaw = target[:, 1]
+        values[in_place, 1] = torch.where(
+            seconds[in_place] < 2.0,
+            torch.zeros_like(seconds[in_place]),
+            torch.where(
+                seconds[in_place] < 4.0,
+                yaw[in_place] * (seconds[in_place] - 2.0) / 2.0,
+                torch.where(
+                    seconds[in_place] < 14.0,
+                    yaw[in_place],
+                    torch.where(
+                        seconds[in_place] < 16.0,
+                        yaw[in_place] * (16.0 - seconds[in_place]) / 2.0,
+                        torch.zeros_like(seconds[in_place]),
+                    ),
+                ),
+            ),
+        )
+
+        moving = mode == 3
+        local = seconds[moving]
+        move_vx = target[moving, 0]
+        move_wz = target[moving, 1]
+        move_values = torch.zeros((len(local), 2), device=self.device)
+        move_values[:, 0] = torch.where(
+            local < 2.0,
+            torch.zeros_like(local),
+            torch.where(
+                local < 6.0,
+                move_vx * (local - 2.0) / 4.0,
+                torch.where(
+                    local < 24.0,
+                    move_vx,
+                    torch.where(
+                        local < 28.0,
+                        move_vx * (28.0 - local) / 4.0,
+                        torch.zeros_like(local),
+                    ),
+                ),
+            ),
+        )
+        move_values[:, 1] = torch.where(
+            local < 6.0,
+            torch.zeros_like(local),
+            torch.where(
+                local < 8.0,
+                move_wz * (local - 6.0) / 2.0,
+                torch.where(
+                    local < 14.0,
+                    move_wz,
+                    torch.where(
+                        local < 16.0,
+                        move_wz * (1.0 - (local - 14.0)),
+                        torch.where(
+                            local < 22.0,
+                            -move_wz,
+                            torch.where(
+                                local < 24.0,
+                                -move_wz * (24.0 - local) / 2.0,
+                                torch.zeros_like(local),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        values[moving] = move_values
+        return values
+
     def _update_command(self, env_ids: torch.Tensor | None) -> None:
         self._set_commands(env_ids)
+
+    def _finalize_adaptive_episodes(self, env_ids: torch.Tensor) -> None:
+        if self._grid is None or len(env_ids) == 0:
+            return
+        active = self._grid_steps[env_ids] > 0.0
+        if not bool(active.any().item()):
+            return
+        reward_term = self._env.reward_manager.cfg["course"].func
+        reward_metrics = reward_term.metrics()
+        duration = (
+            self._grid_steps[env_ids] * self._env.step_dt
+            / self._grid_durations[env_ids].clamp(min=1e-6)
+        )
+        fell = reward_metrics["fell"][env_ids] > 0.0
+        health = reward_term.gate_mask(
+            reward_metrics,
+            gates=reward_term.health_gates,
+        )[env_ids]
+        health &= (duration >= 0.98) & ~fell
+        success = active & health
+        episodes = []
+        for offset, env_id in enumerate(env_ids.tolist()):
+            key = self._grid_cell_keys[env_id]
+            if key is not None and bool(active[offset].item()):
+                episodes.append(
+                    (
+                        key,
+                        bool(success[offset].item()),
+                        bool(health[offset].item()),
+                    )
+                )
+        self._grid.record(episodes)
+        self._env.extras.setdefault("log", {})
+        state = self._grid.state()
+        log_dir = getattr(self._env, "log_dir", None) or getattr(
+            self._env.cfg, "log_dir", None
+        )
+        if log_dir:
+            path = Path(log_dir) / "curriculum_state.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        self._env.extras["log"].update(
+            {
+                "Curriculum/active_cells": state["active_cells"],
+                "Curriculum/expansions": state["expansions"],
+                "Curriculum/protected_unhealthy": float(
+                    state["protected_unhealthy"]
+                ),
+                "Curriculum/protected_health_ready_modes": float(
+                    sum(state["protected_health_ready"].values())
+                ),
+            }
+        )
 
     def _update_metrics(self) -> None:
         max_steps = max(self._env.max_episode_length, 1)
@@ -579,9 +1025,19 @@ class CourseCommand(CommandTerm):
             - self.robot.data.root_link_lin_vel_b[:, 0]
         ).abs() / max_steps
         self.metrics["error_yaw"] += (
-            self.command_b[:, 1]
+            self.yaw_target
             - self.robot.data.root_link_ang_vel_b[:, 2]
         ).abs() / max_steps
+        if self._grid is not None:
+            self._grid_speed_error += (
+                self.command_b[:, 0]
+                - self.robot.data.root_link_lin_vel_b[:, 0]
+            ).abs()
+            self._grid_yaw_error += (
+                self.yaw_target
+                - self.robot.data.root_link_ang_vel_b[:, 2]
+            ).abs()
+            self._grid_steps += 1.0
 
 
 def _planned_forward_distance(profile: dict[str, Any]) -> float:
@@ -822,15 +1278,55 @@ class XingtianReward:
         self.defaults = reward_defaults_for_stage(COURSE, self.stage_name)
         self.penalties = dict(COURSE.reward_penalties)
         self.penalties.update(self.stage.get("overrides", {}))
+        safety = COURSE.objectives["safety"]
+        self.turn_radius_window_min_speed = float(
+            safety["turn_radius_window_min_speed_mps"]
+        )
+        self.turn_radius_window_min_yaw = float(
+            safety["turn_radius_window_min_yaw_rad_s"]
+        )
+        self.stop_after_motion_arm_speed = float(
+            COURSE.objectives["adaptive_grid"][
+                "stop_after_motion_arm_speed_mps"
+            ]
+        )
         self.robot: Entity = env.scene["robot"]
         self.command_term: CourseCommand = env.command_manager.get_term("course")
-        self._profile_peak = torch.tensor(
+        if self.command_term.adaptive_grid is not None:
+            self._env_task_types = self.command_term.profile_names
+            self._env_gates = [
+                resolved_task_gate(COURSE, self.stage_name, task_type)
+                for task_type in self._env_task_types
+            ]
+        else:
+            self._env_task_types = tuple(
+                profile_task_type(self.stage_name, self.stage, profile)
+                for profile in self.command_term.profiles
+            )
+            self._env_gates = [
+                resolved_profile_gate(COURSE, self.stage_name, profile)
+                for profile in self.command_term.profiles
+            ]
+        health_gate = self.stage.get("adaptive_grid", {}).get("health_gate")
+        self._health_gates = (
+            [dict(health_gate) for _ in self._env_gates]
+            if health_gate is not None
+            else self._env_gates
+        )
+        self._task_type_index = {
+            task_type: index
+            for index, task_type in enumerate(
+                dict.fromkeys(self._env_task_types)
+            )
+        }
+        self._task_type_ids = torch.tensor(
             [
-                max(abs(float(point[1])) for point in profile["points"])
-                for profile in self.stage["profiles"]
+                self._task_type_index[task_type]
+                for task_type in self._env_task_types
             ],
             device=self.device,
         )
+        self._gate_cache: dict[str, torch.Tensor] = {}
         joint_ids, joint_names = self.robot.find_joints(
             JOINTS, preserve_order=True
         )
@@ -840,6 +1336,14 @@ class XingtianReward:
             device=self.device,
             dtype=torch.long,
         )
+        self._leg_ids = torch.tensor(
+            [joint_ids[index[name]] for name in GAIT_JOINTS],
+            device=self.device,
+            dtype=torch.long,
+        )
+        self._default_leg_pos = self.robot.data.default_joint_pos[
+            :, self._leg_ids
+        ].clone()
         self._wheel_action_ids = torch.tensor(
             [JOINTS.index(name) for name in WHEEL_JOINTS],
             device=self.device,
@@ -858,6 +1362,16 @@ class XingtianReward:
         self._steps = torch.zeros(n, device=self.device)
         self._speed_err = torch.zeros(n, device=self.device)
         self._yaw_err = torch.zeros(n, device=self.device)
+        self._yaw_underspeed_sum = torch.zeros(n, device=self.device)
+        self._yaw_rate_peak = torch.zeros(n, device=self.device)
+        self._actual_turn_angle = torch.zeros(n, device=self.device)
+        self._positive_turn_angle = torch.zeros(n, device=self.device)
+        self._negative_turn_angle = torch.zeros(n, device=self.device)
+        self._positive_turn_command = torch.zeros(n, device=self.device)
+        self._negative_turn_command = torch.zeros(n, device=self.device)
+        self._reference_path = torch.zeros((n, 2), device=self.device)
+        self._reference_heading = torch.zeros(n, device=self.device)
+        self._s_turn_path_error_max = torch.zeros(n, device=self.device)
         self._upright = torch.zeros(n, device=self.device)
         self._height_err = torch.zeros(n, device=self.device)
         self._height_max = torch.zeros(n, device=self.device)
@@ -889,6 +1403,15 @@ class XingtianReward:
         self._wheel_target_difference_max = torch.zeros(n, device=self.device)
         self._wheel_sync_excess_ema = torch.zeros(n, device=self.device)
         self._wheel_sync_peak_ratio = torch.zeros(n, device=self.device)
+        self._wheel_center_signed_sum = torch.zeros(n, device=self.device)
+        self._wheel_center_signed_max = torch.zeros(n, device=self.device)
+        self._hip_difference_sum = torch.zeros(n, device=self.device)
+        self._knee_difference_sum = torch.zeros(n, device=self.device)
+        self._hip_difference_max = torch.zeros(n, device=self.device)
+        self._knee_difference_max = torch.zeros(n, device=self.device)
+        self._wheel_common_action_sum = torch.zeros(n, device=self.device)
+        self._wheel_common_action_max = torch.zeros(n, device=self.device)
+        self._wheel_differential_action_sum = torch.zeros(n, device=self.device)
         self._cruise_speed_sum = torch.zeros(n, device=self.device)
         self._cruise_error_sum = torch.zeros(n, device=self.device)
         self._cruise_steps = torch.zeros(n, device=self.device)
@@ -911,6 +1434,14 @@ class XingtianReward:
         self._stop_speed_max = torch.zeros(n, device=self.device)
         self._stop_speed_excess_ema = torch.zeros(n, device=self.device)
         self._stop_speed_peak_ratio = torch.zeros(n, device=self.device)
+        self._stop_after_motion = torch.zeros(
+            n, dtype=torch.bool, device=self.device
+        )
+        self._completion_awarded = torch.zeros(
+            n, dtype=torch.bool, device=self.device
+        )
+        self._post_motion_stop_quality_sum = torch.zeros(n, device=self.device)
+        self._post_motion_stop_steps = torch.zeros(n, device=self.device)
         self._power_sum = torch.zeros(n, device=self.device)
         self._stop_cycles = torch.zeros(n, device=self.device)
         self._obstacle_mask = torch.zeros(n, dtype=torch.long, device=self.device)
@@ -918,6 +1449,10 @@ class XingtianReward:
         self._finished = torch.zeros(n, dtype=torch.bool, device=self.device)
         self._crested = torch.zeros(n, dtype=torch.bool, device=self.device)
         self._fall = torch.zeros(n, dtype=torch.bool, device=self.device)
+        self._turn_radius_min = torch.full(
+            (n,), 1.0e6, dtype=torch.float, device=self.device
+        )
+        self._turn_radius_max = torch.zeros(n, device=self.device)
 
     @property
     def num_envs(self) -> int:
@@ -938,6 +1473,8 @@ class XingtianReward:
             self._holding,
             self._hold_settled_active,
             self._in_place_active_previous,
+            self._stop_after_motion,
+            self._completion_awarded,
         ):
             tensor[env_ids] = False
         for tensor in (
@@ -949,6 +1486,14 @@ class XingtianReward:
             self._steps,
             self._speed_err,
             self._yaw_err,
+            self._yaw_underspeed_sum,
+            self._yaw_rate_peak,
+            self._actual_turn_angle,
+            self._positive_turn_angle,
+            self._negative_turn_angle,
+            self._positive_turn_command,
+            self._negative_turn_command,
+            self._s_turn_path_error_max,
             self._upright,
             self._height_err,
             self._height_max,
@@ -980,6 +1525,15 @@ class XingtianReward:
             self._wheel_target_difference_max,
             self._wheel_sync_excess_ema,
             self._wheel_sync_peak_ratio,
+            self._wheel_center_signed_sum,
+            self._wheel_center_signed_max,
+            self._hip_difference_sum,
+            self._knee_difference_sum,
+            self._hip_difference_max,
+            self._knee_difference_max,
+            self._wheel_common_action_sum,
+            self._wheel_common_action_max,
+            self._wheel_differential_action_sum,
             self._cruise_speed_sum,
             self._cruise_error_sum,
             self._cruise_steps,
@@ -992,26 +1546,155 @@ class XingtianReward:
             self._stop_speed_max,
             self._stop_speed_excess_ema,
             self._stop_speed_peak_ratio,
+            self._post_motion_stop_quality_sum,
+            self._post_motion_stop_steps,
             self._power_sum,
             self._obstacles,
             self._last_vx,
             self._peak_speed,
             self._last_cmd,
+            self._turn_radius_max,
         ):
             tensor[env_ids] = 0.0
+        self._turn_radius_min[env_ids] = 1.0e6
         self._hold_origin[env_ids] = 0.0
         self._hold_settled_origin[env_ids] = 0.0
         self._hold_settled_heading[env_ids] = 0.0
         self._in_place_origin[env_ids] = 0.0
+        self._reference_path[env_ids] = 0.0
+        self._reference_heading[env_ids] = 0.0
 
-    def _quality(
-        self, observed: torch.Tensor, tolerance: float
+    def _gate_value(self, key: str, default: float) -> torch.Tensor:
+        values = self._gate_cache.get(key)
+        if values is None:
+            values = torch.tensor(
+                [float(gate.get(key, default)) for gate in self._env_gates],
+                device=self.device,
+            )
+            self._gate_cache[key] = values
+        return values[self.command_term.profile_ids]
+
+    def gate_mask(
+        self,
+        metrics: dict[str, torch.Tensor],
+        ignore: tuple[str, ...] = ("min_pass_rate",),
+        gates: list[dict[str, Any]] | None = None,
     ) -> torch.Tensor:
-        return torch.exp(-torch.square(observed / max(tolerance, 1e-6)))
+        gates = self._env_gates if gates is None else gates
+        result = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+        keys = {
+            key
+            for gate in gates
+            for key in gate
+            if key not in ignore
+        }
+        for key in keys:
+            values = torch.tensor(
+                [
+                    float(gate[key]) if key in gate else math.nan
+                    for gate in gates
+                ],
+                device=self.device,
+            )[self.command_term.profile_ids]
+            present = torch.isfinite(values)
+            metric = metrics[metric_name(key)]
+            if key == "require_finish":
+                passed = metric.bool() == values.bool()
+            elif key.startswith("max_") or key == "mean_height_tolerance_m":
+                passed = metric <= values
+            else:
+                passed = metric >= values
+            result &= ~present | passed
+        return result
+
+    def gate_quality(
+        self,
+        metrics: dict[str, torch.Tensor],
+        ignore: tuple[str, ...] = ("min_pass_rate",),
+        gates: list[dict[str, Any]] | None = None,
+    ) -> torch.Tensor:
+        """Return continuous [0, 1] margin quality for each environment."""
+        gates = self._env_gates if gates is None else gates
+        quality = torch.zeros(self.num_envs, device=self.device)
+        count = torch.zeros(self.num_envs, device=self.device)
+        keys = {
+            key
+            for gate in gates
+            for key in gate
+            if key not in ignore
+        }
+        for key in keys:
+            limits = torch.tensor(
+                [
+                    float(gate[key]) if key in gate else math.nan
+                    for gate in gates
+                ],
+                device=self.device,
+            )[self.command_term.profile_ids]
+            present = torch.isfinite(limits)
+            safe_limits = torch.where(
+                present,
+                limits,
+                torch.ones_like(limits),
+            )
+            metric = metrics[metric_name(key)]
+            if key == "require_finish":
+                expected = safe_limits.bool()
+                value = torch.where(
+                    expected,
+                    metric.bool().float(),
+                    1.0 - metric.bool().float(),
+                )
+                value = value.clamp(0.0, 1.0)
+            elif key.startswith("max_") or key == "mean_height_tolerance_m":
+                limit = safe_limits.clamp(min=1e-6)
+                excess = torch.clamp(metric.float() - safe_limits, min=0.0)
+                value = torch.exp(-4.0 * torch.square(excess / limit))
+            else:
+                limit = safe_limits.clamp(min=1e-6)
+                deficit = torch.clamp(safe_limits - metric.float(), min=0.0)
+                value = torch.exp(-4.0 * torch.square(deficit / limit))
+            value = torch.where(present, value, torch.zeros_like(value))
+            quality += value
+            count += present.float()
+        return quality / count.clamp(min=1.0)
+
+    def task_mask(self, task_type: str) -> torch.Tensor:
+        task_index = self._task_type_index.get(task_type)
+        if task_index is None:
+            return torch.zeros(
+                self.num_envs, dtype=torch.bool, device=self.device
+            )
+        return self._task_type_ids[
+            self.command_term.profile_ids
+        ] == task_index
+
+    @property
+    def health_gates(self) -> list[dict[str, Any]]:
+        return self._health_gates
 
     @staticmethod
-    def _huber(error: torch.Tensor, tolerance: float) -> torch.Tensor:
-        ratio = torch.abs(error) / max(tolerance, 1e-6)
+    def _safe_tolerance(value: torch.Tensor | float) -> torch.Tensor | float:
+        if torch.is_tensor(value):
+            return value.clamp(min=1e-6)
+        return max(float(value), 1e-6)
+
+    def _quality(
+        self, observed: torch.Tensor, tolerance: torch.Tensor | float
+    ) -> torch.Tensor:
+        return torch.exp(
+            -torch.square(observed / self._safe_tolerance(tolerance))
+        )
+
+    @staticmethod
+    def _huber(
+        error: torch.Tensor, tolerance: torch.Tensor | float
+    ) -> torch.Tensor:
+        if torch.is_tensor(tolerance):
+            tolerance = tolerance.clamp(min=1e-6)
+        else:
+            tolerance = max(float(tolerance), 1e-6)
+        ratio = torch.abs(error) / tolerance
         return torch.where(
             ratio <= 1.0,
             0.5 * torch.square(ratio),
@@ -1021,18 +1704,41 @@ class XingtianReward:
     @staticmethod
     def _gate_excess(
         value: torch.Tensor,
-        limit: float,
+        limit: torch.Tensor | float,
     ) -> torch.Tensor:
-        return torch.clamp(value / max(limit, 1e-6) - 1.0, min=0.0)
+        if torch.is_tensor(limit):
+            limit = limit.clamp(min=1e-6)
+        else:
+            limit = max(float(limit), 1e-6)
+        return torch.clamp(value / limit - 1.0, min=0.0)
 
     @classmethod
     def _gate_cost(
         cls,
         value: torch.Tensor,
-        limit: float,
+        limit: torch.Tensor | float,
     ) -> torch.Tensor:
-        ratio = value / max(limit, 1e-6)
+        if torch.is_tensor(limit):
+            limit = limit.clamp(min=1e-6)
+        else:
+            limit = max(float(limit), 1e-6)
+        ratio = value / limit
         return 0.05 * torch.square(ratio) + cls._gate_excess(value, limit)
+
+    @staticmethod
+    def _margin_cost(
+        value: torch.Tensor,
+        tolerance: torch.Tensor | float,
+    ) -> torch.Tensor:
+        if torch.is_tensor(tolerance):
+            tolerance = tolerance.clamp(min=1e-6)
+        else:
+            tolerance = max(float(tolerance), 1e-6)
+        excess = torch.clamp(
+            value / tolerance - 1.0,
+            min=0.0,
+        )
+        return excess + 0.5 * torch.square(excess)
 
     def _command_gradient(self, command: torch.Tensor) -> torch.Tensor:
         return (command - self._last_cmd) / self._env.step_dt
@@ -1053,6 +1759,28 @@ class XingtianReward:
         gravity_xy = robot.data.projected_gravity_b[:, :2]
         pos_xy = robot.data.root_link_pos_w[:, :2]
         heading = robot.data.heading_w
+        turn_radius_active = (
+            (cmd[:, 0].abs() >= self.turn_radius_window_min_speed)
+            & (cmd[:, 1].abs() >= self.turn_radius_window_min_yaw)
+            & (vx.abs() >= self.turn_radius_window_min_speed)
+        )
+        turn_radius = torch.where(
+            turn_radius_active,
+            vx.abs() / wz.abs().clamp(min=1e-6),
+            torch.full_like(vx, 1.0e6),
+        )
+        self._turn_radius_min = torch.minimum(
+            self._turn_radius_min,
+            turn_radius,
+        )
+        self._turn_radius_max = torch.maximum(
+            self._turn_radius_max,
+            torch.where(
+                turn_radius_active,
+                turn_radius,
+                torch.zeros_like(turn_radius),
+            ),
+        )
         cross_track_error, path_lateral_velocity = _path_tracking_state(env)
         scan = env.scene["terrain_scan"]
         center_ray = scan.num_rays_per_frame // 2
@@ -1063,28 +1791,25 @@ class XingtianReward:
             self._last_x[fresh] = robot.data.root_link_pos_w[fresh, 0]
             self._last_vx[fresh] = vx[fresh]
             self._initialized[fresh] = True
+            self._reference_path[fresh] = self.command_term.start_pos[fresh, :2]
+            self._reference_heading[fresh] = self.command_term.start_heading[
+                fresh
+            ]
 
-        speed_tol = float(self.defaults.get("speed_tolerance_base_mps", 0.08))
-        yaw_tol = float(self.defaults.get("yaw_tolerance_base_rad_s", 0.12))
-        if self.stage["terrain"]["kind"] in {"slope", "rough", "composite"}:
-            speed_tol = float(
-                self.defaults.get("speed_tolerance_slope", speed_tol)
-            )
-            yaw_tol = float(
-                self.defaults.get("yaw_tolerance_slope", yaw_tol)
-            )
-        height_tol = float(self.defaults.get("height_tolerance_m", 0.025))
-        if self.stage["terrain"]["kind"] == "flat":
-            height_tol = float(
-                self.stage["gate"].get(
-                    "max_settled_mean_height_error_m",
-                    height_tol,
-                )
-            )
-        pitch_tol = float(self.defaults.get("pitch_tolerance_rad", 0.0873))
-        slip_tol = float(self.defaults.get("wheel_slip_tolerance_mps", 0.5))
+        speed_tol = 0.8 * self._gate_value("max_speed_mae_mps", 0.12)
+        yaw_tol = 0.8 * self._gate_value("max_yaw_mae_rad_s", 0.15)
+        height_tol = 0.8 * self._gate_value(
+            "max_settled_mean_height_error_m", 0.03
+        )
+        pitch_tol = 0.8 * torch.deg2rad(
+            self._gate_value("max_mean_abs_pitch_deg", 4.0)
+        )
+        slip_tol = 0.8 * torch.minimum(
+            self._gate_value("max_settled_wheel_slip_mps", 0.5),
+            self._gate_value("max_transient_wheel_slip_mps", 0.5),
+        )
         accel_tol = float(self.defaults.get("acceleration_tolerance_mps2", 0.8))
-        zero_tol = float(self.defaults.get("zero_speed_tolerance_mps", 0.03))
+        zero_tol = 0.8 * self._gate_value("max_stop_speed_mps", 0.03)
         underspeed_cost_limit = float(
             self.defaults.get("underspeed_cost_limit", 1e9)
         )
@@ -1093,30 +1818,138 @@ class XingtianReward:
             0.0,
         )
         startup_window_s = float(self.defaults.get("startup_window_s", 0.0))
-        drift_tol = float(self.defaults.get("drift_tolerance_m", 0.2))
-        heading_tol = float(self.defaults.get("heading_tolerance_rad", 0.1745))
-        straight_heading_tol = float(
-            self.defaults.get("straight_heading_tolerance_rad", heading_tol)
+        drift_tol = 0.8 * self._gate_value(
+            "max_hold_drift_after_0.5s_m", 0.2
         )
-        alignment_tol = float(
-            self.defaults.get("wheel_alignment_tolerance_m", 0.01)
+        heading_tol = 0.8 * torch.deg2rad(
+            self._gate_value("max_final_heading_error_deg", 10.0)
+        )
+        straight_heading_tol = heading_tol
+        alignment_tol = 0.8 * self._gate_value(
+            "max_wheel_center_offset_m", 0.01
         )
         straight_yaw_tol = float(
             self.defaults.get("straight_yaw_threshold_rad_s", 0.05)
         )
-        heading_drift_gate_deg = self.stage["gate"].get(
-            "max_heading_drift_after_0.5s_deg"
-        )
-        heading_drift_tol = (
-            math.radians(float(heading_drift_gate_deg)) * 0.75
-            if heading_drift_gate_deg is not None
-            else heading_tol
+        heading_drift_tol = 0.75 * torch.deg2rad(
+            self._gate_value("max_heading_drift_after_0.5s_deg", 5.0)
         )
 
+        yaw_cmd = self.command_term.yaw_target
+        straight_task = self.task_mask("straight").float()
+        moving_task = self.task_mask("moving_turn").float()
+        mid_heading = (
+            self._reference_heading
+            + 0.5 * cmd[:, 1] * self._env.step_dt
+        )
+        self._reference_path[:, 0] += (
+            cmd[:, 0] * torch.cos(mid_heading) * self._env.step_dt
+        )
+        self._reference_path[:, 1] += (
+            cmd[:, 0] * torch.sin(mid_heading) * self._env.step_dt
+        )
+        self._reference_heading += cmd[:, 1] * self._env.step_dt
+        self._positive_turn_angle += (
+            torch.clamp(wz, min=0.0) * self._env.step_dt
+        )
+        self._negative_turn_angle += (
+            torch.clamp(-wz, min=0.0) * self._env.step_dt
+        )
+        self._positive_turn_command += (
+            torch.clamp(cmd[:, 1], min=0.0) * self._env.step_dt
+        )
+        self._negative_turn_command += (
+            torch.clamp(-cmd[:, 1], min=0.0) * self._env.step_dt
+        )
+        tangent = torch.stack(
+            (
+                torch.cos(self._reference_heading),
+                torch.sin(self._reference_heading),
+            ),
+            dim=-1,
+        )
+        normal = torch.stack((-tangent[:, 1], tangent[:, 0]), dim=-1)
+        delta = pos_xy - self._reference_path
+        straight_path_error = torch.abs(torch.sum(delta * normal, dim=1))
+        turn_radius = (
+            cmd[:, 0].abs() / cmd[:, 1].abs().clamp(min=1e-6)
+        ).clamp(max=10.0)
+        turn_center = (
+            self._reference_path
+            + torch.sign(cmd[:, 1]).unsqueeze(-1)
+            * turn_radius.unsqueeze(-1)
+            * normal
+        )
+        turning_path_error = torch.abs(
+            torch.norm(pos_xy - turn_center, dim=1) - turn_radius
+        )
+        path_error = torch.where(
+            (cmd[:, 0].abs() > 1e-6) & (cmd[:, 1].abs() > 1e-6),
+            turning_path_error,
+            straight_path_error,
+        )
+        self._s_turn_path_error_max = torch.maximum(
+            self._s_turn_path_error_max,
+            path_error,
+        )
         speed_error = vx - cmd[:, 0]
-        speed_scale = torch.clamp(2.0 * cmd[:, 0].abs(), min=2.0 * zero_tol)
+        speed_scale = torch.maximum(
+            2.0 * cmd[:, 0].abs(),
+            2.0 * zero_tol,
+        )
         speed = torch.clamp(1.0 - speed_error.abs() / speed_scale, min=0.0)
-        yaw = self._quality(wz - cmd[:, 1], yaw_tol)
+        yaw = self._quality(wz - yaw_cmd, yaw_tol)
+        yaw_underspeed_tol = yaw_tol
+        yaw_direction = torch.sign(yaw_cmd)
+        yaw_underspeed_error = torch.clamp(
+            yaw_cmd.abs() - yaw_direction * wz,
+            min=0.0,
+        )
+        yaw_underspeed_cost = self._huber(
+            yaw_underspeed_error,
+            yaw_underspeed_tol,
+        )
+        self._yaw_underspeed_sum += yaw_underspeed_error
+        yaw_overspeed_margin = max(
+            float(
+                self.defaults.get(
+                    "yaw_overspeed_margin_fraction",
+                    overspeed_margin_fraction,
+                )
+            ),
+            0.0,
+        )
+        yaw_overspeed_error = torch.clamp(
+            wz.abs() - yaw_cmd.abs() * (1.0 + yaw_overspeed_margin),
+            min=0.0,
+        )
+        yaw_overspeed_cost = self._huber(yaw_overspeed_error, yaw_tol)
+        self._yaw_rate_peak = torch.maximum(self._yaw_rate_peak, wz.abs())
+        commanded_turn_angle = (
+            self.command_term.target_heading
+            - self.command_term.start_heading
+        )
+        self._actual_turn_angle += wz * self._env.step_dt
+        turn_angle_error = self._actual_turn_angle - commanded_turn_angle
+        segment_turn_angle_error = torch.maximum(
+            torch.abs(
+                self._positive_turn_angle - self._positive_turn_command
+            ),
+            torch.abs(
+                self._negative_turn_angle - self._negative_turn_command
+            ),
+        )
+        turn_angle_tol = 0.8 * self._gate_value(
+            "max_turn_angle_error_rad", 0.2
+        )
+        turn_angle_cost = self._huber(
+            torch.where(
+                moving_task.bool(),
+                segment_turn_angle_error,
+                turn_angle_error,
+            ),
+            turn_angle_tol,
+        )
         heading_error = torch.atan2(
             torch.sin(heading - self.command_term.target_heading),
             torch.cos(heading - self.command_term.target_heading),
@@ -1131,7 +1964,7 @@ class XingtianReward:
             torch.abs(cmd[:, 1]) <= straight_yaw_tol,
             self._huber(
                 cross_track_error,
-                float(self.stage["gate"].get("max_cross_track_error_m", 0.05)),
+                0.8 * self._gate_value("max_cross_track_error_m", 0.05),
             ),
             torch.zeros(B, device=self.device),
         )
@@ -1151,6 +1984,22 @@ class XingtianReward:
         previous_wheel_action = env.action_manager.prev_action[
             :, self._wheel_action_ids
         ]
+        wheel_straight = torch.abs(yaw_cmd) <= straight_yaw_tol
+        wheel_common_action = raw_wheel_action.mean(dim=1)
+        wheel_differential_action = 0.5 * (
+            raw_wheel_action[:, 1] - raw_wheel_action[:, 0]
+        )
+        wheel_common_residual_cost = torch.where(
+            ~wheel_straight,
+            wheel_common_action.abs(),
+            torch.zeros(B, device=self.device),
+        )
+        self._wheel_common_action_sum += wheel_common_action
+        self._wheel_common_action_max = torch.maximum(
+            self._wheel_common_action_max,
+            wheel_common_action.abs(),
+        )
+        self._wheel_differential_action_sum += wheel_differential_action
         wheel_direction_flip = (
             raw_wheel_action * previous_wheel_action < 0.0
         ).float().mean(dim=1)
@@ -1186,11 +2035,20 @@ class XingtianReward:
             self._heading_error_max, torch.abs(heading_error)
         )
         self._cross_track_max = torch.maximum(
-            self._cross_track_max, torch.abs(cross_track_error)
+            self._cross_track_max,
+            torch.where(
+                straight,
+                torch.abs(cross_track_error),
+                torch.zeros_like(cross_track_error),
+            ),
         )
         self._wheel_difference_max = torch.maximum(
             self._wheel_difference_max,
-            torch.where(straight, wheel_difference, torch.zeros_like(wheel_difference)),
+            torch.where(
+                wheel_straight,
+                wheel_difference,
+                torch.zeros_like(wheel_difference),
+            ),
         )
         self._wheel_target_difference_max = torch.maximum(
             self._wheel_target_difference_max,
@@ -1268,10 +2126,10 @@ class XingtianReward:
         zero_motion_error = torch.sqrt(
             torch.square(
                 torch.norm(robot.data.root_link_lin_vel_b[:, :2], dim=1)
-                / max(zero_tol, 1e-6)
+                / zero_tol.clamp(min=1e-6)
             )
-            + torch.square(wz / max(yaw_tol, 1e-6))
-            + torch.square(heading_error / max(heading_tol, 1e-6))
+            + torch.square(wz / yaw_tol.clamp(min=1e-6))
+            + torch.square(heading_error / heading_tol.clamp(min=1e-6))
         )
         zero_motion_cost = torch.where(
             stand,
@@ -1305,37 +2163,41 @@ class XingtianReward:
         )
         stop_quality = torch.where(
             stopping,
-            torch.exp(-torch.square(torch.abs(vx) / max(zero_tol, 1e-6))),
+            torch.exp(-torch.square(torch.abs(vx) / zero_tol.clamp(min=1e-6))),
             torch.zeros(B, device=self.device),
         )
-        slip_fraction_limit = float(
-            self.stage["gate"].get(
-                "max_settled_wheel_slip_fraction_of_peak",
-                self.stage["gate"].get("max_wheel_slip_fraction_of_peak", 1.0),
-            )
+        # Latch once the episode has commanded high speed. The later stop can
+        # then happen after an arbitrarily long linear deceleration ramp.
+        self._stop_after_motion |= (
+            self._last_cmd.abs() >= self.stop_after_motion_arm_speed
         )
-        slip_absolute_limit = float(
-            self.stage["gate"].get(
-                "max_settled_wheel_slip_mps",
-                self.stage["gate"].get("max_wheel_slip_mps", 0.5),
-            )
+        post_motion_stop_active = self._stop_after_motion & stopping
+        post_motion_stop_quality = torch.where(
+            post_motion_stop_active,
+            stop_quality,
+            torch.zeros(B, device=self.device),
         )
-        transient_slip_limit = self.stage["gate"].get(
-            "max_transient_wheel_slip_mps"
+        slip_fraction_limit = self._gate_value(
+            "max_settled_wheel_slip_fraction_of_peak", 1.0
         )
-        raw_peak_command = self._profile_peak[self.command_term.profile_ids]
+        slip_absolute_limit = self._gate_value(
+            "max_settled_wheel_slip_mps", 0.5
+        )
+        transient_slip_limit = self._gate_value(
+            "max_transient_wheel_slip_mps", 0.5
+        )
+        raw_peak_command = self.command_term.command_peak_speed
         peak_command = torch.where(
             raw_peak_command > 1e-6,
             raw_peak_command,
             torch.ones_like(raw_peak_command),
         )
-        slip_limit = (
-            torch.full_like(peak_command, float(transient_slip_limit))
-            if transient_slip_limit is not None
-            else torch.minimum(
-                peak_command * slip_fraction_limit,
-                torch.full_like(peak_command, slip_absolute_limit),
-            )
+        slip_limit = torch.minimum(
+            peak_command * slip_fraction_limit,
+            torch.minimum(
+                slip_absolute_limit,
+                transient_slip_limit,
+            ),
         )
         wheel_slip_ratio = wheel_slip / slip_limit.clamp(min=1e-6)
         wheel_slip_current_cost = (
@@ -1346,9 +2208,7 @@ class XingtianReward:
             self._wheel_slip_peak_ratio,
             wheel_slip_ratio,
         )
-        stop_speed_limit = float(
-            self.stage["gate"].get("max_stop_speed_mps", 0.1)
-        )
+        stop_speed_limit = self._gate_value("max_stop_speed_mps", 0.1)
         stop_speed_current_cost = torch.where(
             stopping,
             self._gate_cost(
@@ -1357,28 +2217,29 @@ class XingtianReward:
             ),
             torch.zeros(B, device=self.device),
         )
+        post_motion_stop_cost = torch.where(
+            post_motion_stop_active,
+            stop_speed_current_cost,
+            torch.zeros(B, device=self.device),
+        )
         self._stop_speed_peak_ratio = torch.maximum(
             self._stop_speed_peak_ratio,
             torch.where(
                 stopping & stop_metric_active,
-                torch.abs(vx) / max(stop_speed_limit, 1e-6),
+                torch.abs(vx) / stop_speed_limit.clamp(min=1e-6),
                 torch.zeros(B, device=self.device),
             ),
         )
-        wheel_sync_limit = float(
-            self.stage["gate"].get(
-                "max_mean_settled_straight_wheel_speed_difference_mps",
-                self.stage["gate"].get(
-                    "max_settled_straight_wheel_speed_difference_mps",
-                    self.stage["gate"].get(
-                        "max_straight_wheel_speed_difference_mps",
-                        0.15,
-                    ),
-                ),
-            )
+        wheel_sync_limit = torch.minimum(
+            self._gate_value(
+                "max_mean_settled_straight_wheel_speed_difference_mps", 0.15
+            ),
+            self._gate_value(
+                "max_settled_straight_wheel_speed_difference_mps", 0.15
+            ),
         )
         wheel_sync_current_cost = torch.where(
-            straight,
+            wheel_straight,
             self._gate_cost(
                 wheel_difference,
                 wheel_sync_limit,
@@ -1388,8 +2249,8 @@ class XingtianReward:
         self._wheel_sync_peak_ratio = torch.maximum(
             self._wheel_sync_peak_ratio,
             torch.where(
-                straight,
-                wheel_difference / max(wheel_sync_limit, 1e-6),
+                wheel_straight,
+                wheel_difference / wheel_sync_limit.clamp(min=1e-6),
                 torch.zeros(B, device=self.device),
             ),
         )
@@ -1426,23 +2287,29 @@ class XingtianReward:
         wheel_target_scale = max(
             float(
                 self.stage.get("control", {}).get(
-                    "wheel_speed_target_max_rad_s", 22.0
+                    "wheel_speed_target_max_rad_s", NO_LOAD_SPEED
                 )
             ),
             1.0,
         )
-        wheel_chatter_cost = (
-            (wheel_target_difference / wheel_target_scale).clamp(max=2.0)
-            + wheel_direction_flip
+        wheel_sync_cost = torch.where(
+            wheel_straight,
+            torch.square(wheel_difference),
+            torch.zeros(B, device=self.device),
         )
+        wheel_chatter_cost = torch.where(
+            wheel_straight,
+            (wheel_target_difference / wheel_target_scale).clamp(max=2.0),
+            torch.zeros(B, device=self.device),
+        ) + wheel_direction_flip
         standing_wheel_sync_cost = torch.where(
-            stand,
+            stand & wheel_straight,
             torch.abs(raw_wheel_action[:, 0] - raw_wheel_action[:, 1]),
             torch.zeros(B, device=self.device),
         )
         wheel_action_magnitude = torch.square(raw_wheel_action).mean(dim=1)
         standing_wheel_action_cost = torch.where(
-            stand,
+            stand & wheel_straight,
             wheel_action_magnitude,
             torch.zeros(B, device=self.device),
         )
@@ -1450,12 +2317,12 @@ class XingtianReward:
             max(startup_window_s, 0.0) / self._env.step_dt
         )
         startup_wheel_action_cost = torch.where(
-            startup_active & stand,
+            startup_active & stand & wheel_straight,
             wheel_action_magnitude,
             torch.zeros(B, device=self.device),
         )
         settled_wheel_action_cost = torch.where(
-            self._hold_settled_active,
+            self._hold_settled_active & wheel_straight,
             wheel_action_magnitude,
             torch.zeros(B, device=self.device),
         )
@@ -1513,18 +2380,40 @@ class XingtianReward:
             :, robot.find_bodies(("left_wheel", "right_wheel"))[0]
         ]
         wheel_delta = wheel_poses[:, 0, :2] - wheel_poses[:, 1, :2]
-        wheel_center_offset = torch.abs(
+        wheel_center_offset_signed = (
             wheel_delta[:, 0] * torch.cos(heading)
             + wheel_delta[:, 1] * torch.sin(heading)
         )
-        wheel_alignment_cost = torch.where(
-            torch.abs(cmd[:, 1]) <= straight_yaw_tol,
-            torch.clamp(
-                (wheel_center_offset - alignment_tol)
-                / max(alignment_tol, 1e-6),
-                min=0.0,
-                max=1.0,
+        wheel_center_offset = torch.abs(wheel_center_offset_signed)
+        leg_offset = (
+            robot.data.joint_pos[:, self._leg_ids] - self._default_leg_pos
+        )
+        hip_difference = leg_offset[:, 0] - leg_offset[:, 2]
+        knee_difference = leg_offset[:, 1] - leg_offset[:, 3]
+        leg_symmetry_tol = max(
+            float(self.defaults.get("leg_symmetry_tolerance_rad", 0.15)),
+            1e-6,
+        )
+        leg_symmetry_cost = torch.where(
+            ~wheel_straight,
+            0.5
+            * (
+                self._huber(hip_difference, leg_symmetry_tol)
+                + self._huber(knee_difference, leg_symmetry_tol)
             ),
+            torch.zeros(B, device=self.device),
+        )
+        wheel_alignment_cost = torch.where(
+            wheel_straight,
+            self._margin_cost(wheel_center_offset, alignment_tol),
+            torch.zeros(B, device=self.device),
+        )
+        turn_alignment_tol = 0.8 * self._gate_value(
+            "max_wheel_center_offset_m", 0.01
+        )
+        turn_wheel_alignment_cost = torch.where(
+            ~wheel_straight,
+            self._margin_cost(wheel_center_offset, turn_alignment_tol),
             torch.zeros(B, device=self.device),
         )
         soft_limits = robot.data.soft_joint_pos_limits
@@ -1557,6 +2446,7 @@ class XingtianReward:
                 - float(w.get("roll", 0.0)) * roll_cost
                 - float(w.get("vertical_velocity", 0.0)) * vertical_cost
                 - float(w.get("angular_xy", 0.0)) * angular_cost
+                - float(w.get("leg_symmetry", 0.0)) * leg_symmetry_cost
             ),
             "stationary": (
                 float(w.get("stationary", 0.0)) * stationary
@@ -1565,6 +2455,10 @@ class XingtianReward:
                 + float(w.get("zero_speed", 0.0)) * stop_quality
                 - float(p.get("zero_speed", 0.0)) * zero_speed_cost
                 - float(w.get("stop_speed_gate", 0.0)) * stop_speed_gate_cost
+                + float(w.get("post_motion_stop", 0.0))
+                * post_motion_stop_quality
+                - float(w.get("post_motion_stop_gate", 0.0))
+                * post_motion_stop_cost
                 - float(w.get("settled_drift", 0.0)) * settled_drift_cost
                 - float(self.defaults.get("settled_heading_drift_weight", 0.75))
                 * heading_drift_cost
@@ -1575,27 +2469,44 @@ class XingtianReward:
                 - float(w.get("underspeed_cost", 0.0)) * underspeed_cost
                 - float(w.get("overspeed", 0.0)) * overspeed_cost
                 + float(w.get("yaw", 0.0)) * yaw
+                - float(w.get("yaw_underspeed_cost", 0.0))
+                * yaw_underspeed_cost
+                - float(w.get("yaw_overspeed", 0.0)) * yaw_overspeed_cost
+                - float(w.get("turn_angle_cost", 0.0)) * turn_angle_cost
+                - float(w.get("s_turn_path", 0.0))
+                * moving_task
+                * self._huber(
+                    path_error,
+                    0.8 * self._gate_value("max_s_turn_path_error_m", 0.3),
+                )
                 - float(w.get("straight_heading", 0.0))
                 * straight_heading_cost
-                - float(w.get("cross_track", 0.0)) * cross_track_cost
+                * straight_task
+                - float(w.get("cross_track", 0.0))
+                * cross_track_cost
+                * straight_task
                 - float(w.get("acceleration", 0.0)) * acceleration_cost
                 + float(w.get("in_place", 0.0)) * in_place
                 + float(w.get("braking", 0.0)) * braking
                 - float(p.get("lateral", 0.0))
                 * torch.square(path_lateral_velocity)
+                * straight_task
                 - float(w.get("backslide", 0.0)) * backslide
             ),
             "wheel_quality": (
                 float(w.get("wheel_slip", 0.0)) * wheel_slip_reward
                 - float(p.get("wheel_alignment", 0.0))
                 * wheel_alignment_cost
-                - float(p.get("wheel_sync", 0.0))
-                * torch.square(wheel_difference)
+                - float(w.get("turn_wheel_alignment", 0.0))
+                * turn_wheel_alignment_cost
+                - float(p.get("wheel_sync", 0.0)) * wheel_sync_cost
                 - float(w.get("wheel_slip_gate", 0.0))
                 * wheel_slip_gate_cost
                 - float(w.get("wheel_sync_gate", 0.0))
                 * wheel_sync_gate_cost
                 - float(w.get("wheel_chatter", 0.0)) * wheel_chatter_cost
+                - float(w.get("wheel_common_residual", 0.0))
+                * wheel_common_residual_cost
                 - float(w.get("standing_wheel_sync", 0.0))
                 * standing_wheel_sync_cost
                 - float(w.get("standing_wheel_action", 0.0))
@@ -1668,18 +2579,34 @@ class XingtianReward:
         reward_components["fall"] = (
             -fell.float() * float(p.get("fall", 0.0)) / reward_scale
         )
+        profile_steps = (
+            self.command_term.profile_duration / self._env.step_dt
+        ).clamp(min=1.0)
+        completion_now = (
+            (self._steps + 1.0 >= profile_steps)
+            & ~fell
+            & ~self._completion_awarded
+        )
+        self._completion_awarded |= completion_now
+        reward_components["profile_completion"] = (
+            completion_now.float()
+            * float(w.get("profile_completion", 0.0))
+            / reward_scale
+        )
         reward = sum(reward_components.values())
         self._fall |= fell
 
         new_stop = (
             (torch.abs(self._last_cmd) > zero_tol)
             & stopping
-            & (torch.abs(vx) <= float(self.stage["gate"].get("max_stop_speed_mps", 0.1)))
+            & (torch.abs(vx) <= stop_speed_limit)
         )
         self._stop_cycles += new_stop.float()
+        self._post_motion_stop_quality_sum += post_motion_stop_quality
+        self._post_motion_stop_steps += post_motion_stop_active.float()
 
         self._speed_err += torch.abs(vx - cmd[:, 0])
-        self._yaw_err += torch.abs(wz - cmd[:, 1])
+        self._yaw_err += torch.abs(wz - yaw_cmd)
         self._upright += upright
         height_error = torch.abs(clearance - cmd[:, 2])
         self._height_err += height_error
@@ -1715,12 +2642,12 @@ class XingtianReward:
         self._settled_wheel_difference_max = torch.maximum(
             self._settled_wheel_difference_max,
             torch.where(
-                evaluation_active & straight,
+                evaluation_active & wheel_straight,
                 wheel_difference,
                 torch.zeros_like(wheel_difference),
             ),
         )
-        active_wheel_difference = evaluation_active & straight
+        active_wheel_difference = evaluation_active & wheel_straight
         self._settled_wheel_difference_sum += torch.where(
             active_wheel_difference,
             wheel_difference,
@@ -1743,6 +2670,21 @@ class XingtianReward:
         self._backslide_max = torch.maximum(self._backslide_max, backslide)
         self._wheel_center_max = torch.maximum(
             self._wheel_center_max, wheel_center_offset
+        )
+        self._wheel_center_signed_sum += wheel_center_offset_signed
+        self._wheel_center_signed_max = torch.maximum(
+            self._wheel_center_signed_max,
+            wheel_center_offset_signed.abs(),
+        )
+        self._hip_difference_sum += hip_difference
+        self._knee_difference_sum += knee_difference
+        self._hip_difference_max = torch.maximum(
+            self._hip_difference_max,
+            hip_difference.abs(),
+        )
+        self._knee_difference_max = torch.maximum(
+            self._knee_difference_max,
+            knee_difference.abs(),
         )
         self._hold_drift_max = torch.maximum(
             self._hold_drift_max,
@@ -1777,6 +2719,16 @@ class XingtianReward:
         self._power_sum += power
         self._peak_speed = torch.maximum(self._peak_speed, torch.abs(vx))
         self._steps += 1
+        quality_score = torch.zeros(B, device=self.device)
+        if bool(completion_now.any().item()):
+            quality_score = self.gate_quality(self.metrics())
+        reward_components["quality_completion"] = (
+            completion_now.float()
+            * quality_score
+            * float(w.get("quality_completion", 0.0))
+            / reward_scale
+        )
+        reward = sum(reward_components.values())
         self._last_x[:] = x
         self._last_vx[:] = vx
         self._last_cmd[:] = cmd[:, 0]
@@ -1790,8 +2742,39 @@ class XingtianReward:
                 "Reward/total": reward.mean(),
                 "Reward/heading_drift": heading_drift_cost.mean()
                 * -float(self.defaults.get("settled_heading_drift_weight", 0.75)),
+                "Reward/yaw_overspeed": yaw_overspeed_cost.mean()
+                * -float(w.get("yaw_overspeed", 0.0)),
+                "Reward/yaw_underspeed": yaw_underspeed_cost.mean()
+                * -float(w.get("yaw_underspeed_cost", 0.0)),
+                "Reward/turn_angle": turn_angle_cost.mean()
+                * -float(w.get("turn_angle_cost", 0.0)),
                 "Metrics/speed_error_mps": torch.abs(vx - cmd[:, 0]).mean(),
-                "Metrics/yaw_error_rad_s": torch.abs(wz - cmd[:, 1]).mean(),
+                "Metrics/yaw_error_rad_s": torch.abs(wz - yaw_cmd).mean(),
+                "Metrics/yaw_underspeed_rad_s": yaw_underspeed_error.mean(),
+                "Metrics/yaw_rate_peak_rad_s": self._yaw_rate_peak.mean(),
+                "Metrics/actual_turn_angle_rad": self._actual_turn_angle.mean(),
+                "Metrics/commanded_turn_angle_rad": commanded_turn_angle.mean(),
+                "Metrics/turn_angle_error_rad": torch.abs(
+                    turn_angle_error
+                ).mean(),
+                "Metrics/segment_turn_angle_error_rad": torch.maximum(
+                    torch.abs(
+                        self._positive_turn_angle
+                        - self._positive_turn_command
+                    ),
+                    torch.abs(
+                        self._negative_turn_angle
+                        - self._negative_turn_command
+                    ),
+                ).mean(),
+                "Metrics/s_turn_path_error_m": (
+                    self._s_turn_path_error_max.mean()
+                ),
+                "Metrics/turn_radius_min_m": self._turn_radius_min.mean(),
+                "Metrics/turn_radius_max_m": self._turn_radius_max.mean(),
+                "Metrics/turn_radius_active_fraction": (
+                    turn_radius_active.float().mean()
+                ),
                 "Metrics/straight_heading_error_rad": torch.abs(
                     heading_error
                 ).mean(),
@@ -1805,8 +2788,19 @@ class XingtianReward:
                 "Metrics/cross_track_cost": cross_track_cost.mean(),
                 "Metrics/wheel_slip_gate_cost": wheel_slip_gate_cost.mean(),
                 "Metrics/stop_speed_gate_cost": stop_speed_gate_cost.mean(),
+                "Metrics/post_motion_stop_quality": (
+                    post_motion_stop_quality.mean()
+                ),
+                "Metrics/post_motion_stop_cost": post_motion_stop_cost.mean(),
                 "Metrics/wheel_sync_gate_cost": wheel_sync_gate_cost.mean(),
                 "Metrics/wheel_chatter_cost": wheel_chatter_cost.mean(),
+                "Metrics/wheel_common_action": wheel_common_action.mean(),
+                "Metrics/wheel_differential_action": (
+                    wheel_differential_action.mean()
+                ),
+                "Metrics/wheel_common_residual_cost": (
+                    wheel_common_residual_cost.mean()
+                ),
                 "Metrics/underspeed_cost": underspeed_cost.mean(),
                 "Metrics/overspeed_cost": overspeed_cost.mean(),
                 "Metrics/standing_wheel_sync_cost": standing_wheel_sync_cost.mean(),
@@ -1819,6 +2813,44 @@ class XingtianReward:
                 "Metrics/settled_wheel_action_cost": settled_wheel_action_cost.mean(),
                 "Metrics/settled_drift_cost": settled_drift_cost.mean(),
                 "Metrics/roll_cost": roll_cost.mean(),
+                "Metrics/turn_wheel_alignment_cost": (
+                    turn_wheel_alignment_cost.mean()
+                ),
+                "Metrics/leg_symmetry_cost": leg_symmetry_cost.mean(),
+                "Metrics/mean_signed_wheel_center_offset_m": (
+                    self._wheel_center_signed_sum / self._steps.clamp(min=1)
+                ).mean(),
+                "Metrics/max_abs_wheel_center_offset_m": (
+                    self._wheel_center_signed_max.mean()
+                ),
+                "Metrics/mean_hip_difference_rad": (
+                    self._hip_difference_sum / self._steps.clamp(min=1)
+                ).mean(),
+                "Metrics/max_abs_hip_difference_rad": (
+                    self._hip_difference_max.mean()
+                ),
+                "Metrics/mean_knee_difference_rad": (
+                    self._knee_difference_sum / self._steps.clamp(min=1)
+                ).mean(),
+                "Metrics/max_abs_knee_difference_rad": (
+                    self._knee_difference_max.mean()
+                ),
+                "Metrics/left_hip_offset_rad": leg_offset[:, 0].mean(),
+                "Metrics/right_hip_offset_rad": leg_offset[:, 2].mean(),
+                "Metrics/left_knee_offset_rad": leg_offset[:, 1].mean(),
+                "Metrics/right_knee_offset_rad": leg_offset[:, 3].mean(),
+                "Metrics/mean_abs_roll_deg": torch.rad2deg(
+                    self._roll_sum / self._steps.clamp(min=1)
+                ).mean(),
+                "Metrics/max_roll_deg": torch.rad2deg(
+                    self._roll_max
+                ).mean(),
+                "Metrics/mean_abs_pitch_deg": torch.rad2deg(
+                    self._pitch_sum / self._steps.clamp(min=1)
+                ).mean(),
+                "Metrics/max_pitch_deg": torch.rad2deg(
+                    self._pitch_max
+                ).mean(),
                 "Metrics/path_lateral_velocity_mps": (
                     path_lateral_velocity.mean()
                 ),
@@ -1890,9 +2922,39 @@ class XingtianReward:
                     self._wheel_target_difference_max
                 ),
                 "wheel_chatter_cost": wheel_chatter_cost,
+                "wheel_common_action": wheel_common_action,
+                "wheel_differential_action": wheel_differential_action,
+                "wheel_common_residual_cost": wheel_common_residual_cost,
                 "command_speed_mps": cmd[:, 0],
+                "command_yaw_rad_s": yaw_cmd,
                 "signed_speed_mps": vx,
                 "speed_mae_mps": torch.abs(vx - cmd[:, 0]),
+                "yaw_error_rad_s": torch.abs(wz - yaw_cmd),
+                "yaw_underspeed_rad_s": yaw_underspeed_error,
+                "turn_angle_error_rad": torch.abs(turn_angle_error),
+                "segment_turn_angle_error_rad": torch.maximum(
+                    torch.abs(
+                        self._positive_turn_angle
+                        - self._positive_turn_command
+                    ),
+                    torch.abs(
+                        self._negative_turn_angle
+                        - self._negative_turn_command
+                    ),
+                ),
+                "s_turn_path_error_m": self._s_turn_path_error_max,
+                "post_motion_stop_quality": post_motion_stop_quality,
+                "post_motion_stop_cost": post_motion_stop_cost,
+                "wheel_center_offset_m": wheel_center_offset,
+                "wheel_center_offset_signed_m": wheel_center_offset_signed,
+                "hip_difference_rad": hip_difference,
+                "knee_difference_rad": knee_difference,
+                "left_hip_offset_rad": leg_offset[:, 0],
+                "right_hip_offset_rad": leg_offset[:, 2],
+                "left_knee_offset_rad": leg_offset[:, 1],
+                "right_knee_offset_rad": leg_offset[:, 3],
+                "turn_wheel_alignment_cost": turn_wheel_alignment_cost,
+                "leg_symmetry_cost": leg_symmetry_cost,
                 "left_wheel_target_rad_s": wheel_target[:, 0],
                 "right_wheel_target_rad_s": wheel_target[:, 1],
                 "left_wheel_actual_rad_s": wheel_actual[:, 0],
@@ -1903,10 +2965,11 @@ class XingtianReward:
                 "backslide_mps": backslide,
                 "fall_rate": self._fall.float(),
             }
-            for profile_index, profile in enumerate(self.command_term.profiles):
+            for profile_index, profile_name in enumerate(
+                self.command_term.profile_names
+            ):
                 mask = profile_ids == profile_index
                 count = mask.sum().clamp(min=1)
-                profile_name = profile["name"]
                 log_values[
                     f"Metrics/straight_heading_error_{profile_name}_deg"
                 ] = (
@@ -1935,14 +2998,11 @@ class XingtianReward:
 
     def metrics(self) -> dict[str, torch.Tensor]:
         steps = self._steps.clamp(min=1)
-        ratio = self._steps / max(self._env.max_episode_length, 1)
-        raw_peak_command = torch.tensor(
-            [
-                max(abs(float(point[1])) for point in profile["points"])
-                for profile in self.stage["profiles"]
-            ],
-            device=self.device,
-        )[self.command_term.profile_ids]
+        expected_steps = (
+            self.command_term.profile_duration / self._env.step_dt
+        ).clamp(min=1.0)
+        ratio = self._steps / expected_steps
+        raw_peak_command = self.command_term.command_peak_speed
         has_speed_command = raw_peak_command > 1e-6
         peak_command = torch.where(
             has_speed_command,
@@ -1953,7 +3013,7 @@ class XingtianReward:
         progress = torch.abs(
             self._last_x - self.command_term.start_pos[:, 0]
         )
-        completed = (self._steps >= self._env.max_episode_length) & ~self._fall
+        completed = (self._steps >= expected_steps) & ~self._fall
         if self.stage["terrain"]["kind"] == "composite":
             completed = self._finished & ~self._fall
         speed_mae = self._speed_err / steps
@@ -1973,6 +3033,13 @@ class XingtianReward:
         planned_peak_fraction = (
             self._peak_speed / peak_command * fraction_scale
         ).clamp(max=1.0)
+        commanded_turn_angle = (
+            self.command_term.target_heading
+            - self.command_term.start_heading
+        )
+        turn_angle_error = torch.abs(
+            self._actual_turn_angle - commanded_turn_angle
+        )
         return {
             "pass_rate": completed.float(),
             "duration_fraction": ratio,
@@ -1982,6 +3049,23 @@ class XingtianReward:
             "cruise_speed_mae_mps": cruise_speed_error,
             "cruise_speed_fraction": cruise_speed_fraction,
             "yaw_mae_rad_s": self._yaw_err / steps,
+            "yaw_underspeed_rad_s": self._yaw_underspeed_sum / steps,
+            "yaw_rate_peak_rad_s": self._yaw_rate_peak,
+            "heading_error_max_deg": torch.rad2deg(self._heading_error_max),
+            "actual_turn_angle_rad": self._actual_turn_angle,
+            "commanded_turn_angle_rad": commanded_turn_angle,
+            "turn_angle_error_rad": turn_angle_error,
+            "segment_turn_angle_error_rad": torch.maximum(
+                torch.abs(
+                    self._positive_turn_angle - self._positive_turn_command
+                ),
+                torch.abs(
+                    self._negative_turn_angle - self._negative_turn_command
+                ),
+            ),
+            "s_turn_path_error_m": self._s_turn_path_error_max,
+            "turn_radius_min_m": self._turn_radius_min,
+            "turn_radius_max_m": self._turn_radius_max,
             "upright": self._upright / steps,
             "mean_abs_pitch_deg": torch.rad2deg(self._pitch_sum / steps),
             "pitch_deg": torch.rad2deg(self._pitch_max),
@@ -2030,6 +3114,19 @@ class XingtianReward:
             "backslide_mps": self._backslide_max,
             "cross_track_error_m": self._cross_track_max,
             "wheel_center_offset_m": self._wheel_center_max,
+            "mean_signed_wheel_center_offset_m": (
+                self._wheel_center_signed_sum / steps
+            ),
+            "max_abs_wheel_center_offset_m": self._wheel_center_signed_max,
+            "mean_hip_difference_rad": self._hip_difference_sum / steps,
+            "max_abs_hip_difference_rad": self._hip_difference_max,
+            "mean_knee_difference_rad": self._knee_difference_sum / steps,
+            "max_abs_knee_difference_rad": self._knee_difference_max,
+            "wheel_common_action": self._wheel_common_action_sum / steps,
+            "max_abs_wheel_common_action": self._wheel_common_action_max,
+            "wheel_differential_action": (
+                self._wheel_differential_action_sum / steps
+            ),
             "straight_wheel_speed_difference_mps": self._wheel_difference_max,
             "settled_straight_wheel_speed_difference_mps": (
                 self._settled_wheel_difference_max
@@ -2044,6 +3141,13 @@ class XingtianReward:
             "in_place_displacement_m": self._in_place_max,
             "stop_speed_mps": self._stop_speed_max,
             "stop_speed_fraction_of_peak": stop_speed_fraction,
+            "post_motion_stop_quality": (
+                self._post_motion_stop_quality_sum
+                / self._post_motion_stop_steps.clamp(min=1)
+            ),
+            "post_motion_stop_fraction": (
+                self._post_motion_stop_steps / steps
+            ),
             "stop_cycles": self._stop_cycles,
             "obstacle_passes": self._obstacles,
             "forward_progress_m": progress,
@@ -2071,7 +3175,7 @@ def _proprio(env: ManagerBasedRlEnv) -> torch.Tensor:
     command_observation = torch.stack(
         (
             command[:, 0] * 10.0,
-            command[:, 1] * 0.25,
+            command_term.yaw_target * 0.25,
             heading_error * HEADING_ERROR_OBS_SCALE,
         ),
         dim=-1,
@@ -2578,9 +3682,37 @@ def _terrain_cfg(name: str, play: bool = False) -> TerrainEntityCfg:
     )
 
 
+def _course_profile_timeout(env: ManagerBasedRlEnv) -> torch.Tensor:
+    command_term = env.command_manager.get_term("course")
+    if not isinstance(command_term, CourseCommand):
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    elapsed = env.episode_length_buf.float() * env.step_dt
+    return elapsed >= command_term.profile_duration
+
+
+def _adaptive_grid_curriculum(
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor,
+) -> float:
+    command_term = env.command_manager.get_term("course")
+    if not isinstance(command_term, CourseCommand) or command_term.adaptive_grid is None:
+        return 0.0
+    command_term._finalize_adaptive_episodes(env_ids)
+    return float(command_term.adaptive_grid.state()["active_cells"])
+
+
 def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
     stage = COURSE.stage(name)
     terrain = stage["terrain"]
+    wheel_half_track = float(
+        stage.get("control", {}).get("wheel_half_track_m", WHEEL_HALF_TRACK)
+    )
+    if not math.isclose(wheel_half_track, WHEEL_HALF_TRACK):
+        raise ValueError(
+            f"{name}: wheel_half_track_m={wheel_half_track} differs from "
+            f"the policy geometry {WHEEL_HALF_TRACK}; start a new policy "
+            "architecture for alternate geometry"
+        )
     observation_noise = float(stage.get("observation_noise", 0.02))
     if observation_noise < 0.0 or not math.isfinite(observation_noise):
         raise ValueError("observation_noise must be finite and nonnegative")
@@ -2672,6 +3804,27 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
                     "wheel_residual_scale_rad_s", 4.0
                 )
             ),
+            wheel_speed_target_max_rad_s=float(
+                stage.get("control", {}).get(
+                    "wheel_speed_target_max_rad_s", NO_LOAD_SPEED
+                )
+            ),
+            wheel_common_residual_limit_fraction=(
+                float(
+                    stage["control"][
+                        "wheel_common_residual_limit_fraction"
+                    ]
+                )
+                if "wheel_common_residual_limit_fraction"
+                in stage.get("control", {})
+                else None
+            ),
+            wheel_common_residual_turn_threshold=float(
+                stage.get("control", {}).get(
+                    "wheel_common_residual_turn_threshold",
+                    0.05,
+                )
+            ),
             wheel_velocity_feedforward_gain=float(
                 stage.get("control", {}).get(
                     "wheel_velocity_feedforward_gain", 1.0
@@ -2683,9 +3836,7 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
                 )
             ),
             wheel_half_track_m=float(
-                stage.get("control", {}).get(
-                    "wheel_half_track_m", WHEEL_HALF_TRACK
-                )
+                wheel_half_track
             ),
             standing_wheel_target_cap_rad_s=float(
                 stage.get("control", {}).get(
@@ -2705,6 +3856,7 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
             stage_name=name,
             resampling_time_range=(1e9, 1e9),
             profile_index=0 if play else None,
+            include_training_profiles=not play,
         )
     }
     events = {
@@ -2810,10 +3962,19 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
             params={"limit_angle": math.radians(termination_tilt_deg)},
         ),
     }
+    terminations["course_profile_timeout"] = TerminationTermCfg(
+        func=_course_profile_timeout,
+        time_out=True,
+    )
     curriculum = {}
     if terrain["kind"] != "flat" and not play:
         curriculum["terrain_levels"] = CurriculumTermCfg(
             func=_course_terrain_levels,
+            params={},
+        )
+    if stage.get("adaptive_grid") is not None and not play:
+        curriculum["adaptive_grid"] = CurriculumTermCfg(
+            func=_adaptive_grid_curriculum,
             params={},
         )
     return ManagerBasedRlEnvCfg(
@@ -2859,14 +4020,19 @@ def _make_env_cfg(name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
 
 def _ppo_cfg(name: str, num_envs: int = 4096) -> RslRlOnPolicyRunnerCfg:
     stage = COURSE.stage(name)
-    speed_stage = name.startswith("flat_motion_") and name != "flat_motion"
-    base_ppo = (
-        COURSE.speed_ppo
-        if speed_stage
-        else COURSE.stage("flat_balance").get("ppo", {})
-    )
-    ppo = dict(base_ppo)
+    ppo = ppo_defaults_for_stage(COURSE, name)
     ppo.update(stage.get("ppo", {}))
+    learning_rate = float(ppo.get("learning_rate", 2e-4))
+    configured_max_lr = ppo.get("max_learning_rate")
+    if configured_max_lr is not None:
+        configured_max_lr = float(configured_max_lr)
+        if not math.isfinite(configured_max_lr) or configured_max_lr <= 0.0:
+            raise ValueError(f"{name}: max_learning_rate is invalid")
+        learning_rate = min(learning_rate, configured_max_lr)
+    std_min = float(ppo.get("std_min", 1e-6))
+    std_max = float(ppo.get("std_max", 1e6))
+    if not math.isfinite(std_min + std_max) or not 0.0 < std_min <= std_max:
+        raise ValueError(f"{name}: std_min/std_max are invalid")
     iterations = budget_iterations(int(stage["budget"]), num_envs, 24)
     return RslRlOnPolicyRunnerCfg(
         seed=42,
@@ -2886,6 +4052,7 @@ def _ppo_cfg(name: str, num_envs: int = 4096) -> RslRlOnPolicyRunnerCfg:
                 "class_name": "GaussianDistribution",
                 "init_std": 0.3,
                 "std_type": "scalar",
+                "std_range": (std_min, std_max),
             },
             class_name=POLICY_CLASS,
         ),
@@ -2898,7 +4065,7 @@ def _ppo_cfg(name: str, num_envs: int = 4096) -> RslRlOnPolicyRunnerCfg:
         algorithm=RslRlPpoAlgorithmCfg(
             num_learning_epochs=int(ppo.get("n_epochs", 5)),
             num_mini_batches=4,
-            learning_rate=float(ppo.get("learning_rate", 2e-4)),
+            learning_rate=learning_rate,
             schedule="adaptive",
             gamma=float(ppo.get("gamma", 0.99)),
             lam=float(ppo.get("gae_lambda", 0.95)),
@@ -2916,23 +4083,9 @@ def get_task_cfgs(name: str, play: bool = False) -> tuple[ManagerBasedRlEnvCfg, 
 
 
 def register() -> None:
-    for name in COURSE.order:
+    for name in COURSE.all_order:
         register_mjlab_task(
-            task_id=(
-                {
-                    "flat_balance": "Mjlab-Xingtian-Flat-Balance",
-                    "flat_motion": "Mjlab-Xingtian-Flat-Motion",
-                    "flat_turning": "Mjlab-Xingtian-Flat-Turning",
-                    "flat_start_stop": "Mjlab-Xingtian-Flat-StartStop",
-                    "slope": "Mjlab-Xingtian-Slope",
-                    "rough": "Mjlab-Xingtian-Rough",
-                    "roller_obstacle": "Mjlab-Xingtian-Obstacles",
-                    "composite": "Mjlab-Xingtian-Composite",
-                }.get(
-                    name,
-                    f"Mjlab-Xingtian-Speed-{name.removeprefix('flat_motion_')}",
-                )
-            ),
+            task_id=task_id(name),
             env_cfg=_make_env_cfg(name),
             play_env_cfg=_make_env_cfg(name, play=True),
             rl_cfg=_ppo_cfg(name),
@@ -2952,13 +4105,22 @@ def require_cuda(device: str = "cuda:0") -> str:
 
 
 def _eval_env_cfg(
-    stage_name: str, seed: int, profile_index: int
+    stage_name: str,
+    seed: int,
+    profile_index: int | None,
+    include_training_profiles: bool = False,
+    profile_sequence: tuple[int, ...] | None = None,
+    num_envs: int = 1,
 ) -> tuple[ManagerBasedRlEnvCfg, RslRlOnPolicyRunnerCfg]:
     env_cfg, agent_cfg = get_task_cfgs(stage_name, play=True)
-    env_cfg.scene.num_envs = 1
+    env_cfg.scene.num_envs = num_envs
     env_cfg.seed = seed
     env_cfg.auto_reset = False
     env_cfg.commands["course"].profile_index = profile_index
+    env_cfg.commands["course"].profile_sequence = profile_sequence
+    env_cfg.commands["course"].include_training_profiles = (
+        include_training_profiles
+    )
     env_cfg.observations["actor"].enable_corruption = False
     if env_cfg.scene.terrain is not None and env_cfg.scene.terrain.terrain_generator:
         generator = env_cfg.scene.terrain.terrain_generator
@@ -2974,13 +4136,23 @@ def _eval_env_cfg(
 def _load_runner(
     stage_name: str,
     seed: int,
-    profile_index: int,
+    profile_index: int | None,
     checkpoint: Path,
     device: str,
+    include_training_profiles: bool = False,
+    profile_sequence: tuple[int, ...] | None = None,
+    num_envs: int = 1,
 ):
     contract_path = checkpoint.parent / "contract.json"
     load_run_contract(contract_path, stage_name)
-    env_cfg, agent_cfg = _eval_env_cfg(stage_name, seed, profile_index)
+    env_cfg, agent_cfg = _eval_env_cfg(
+        stage_name,
+        seed,
+        profile_index,
+        include_training_profiles,
+        profile_sequence,
+        num_envs,
+    )
     env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
     wrapped = RslRlVecEnvWrapper(env, clip_actions=1.0)
     runner = XingtianOnPolicyRunner(wrapped, asdict(agent_cfg), device=device)
@@ -3056,11 +4228,11 @@ def create_actor_initial_checkpoint(
             )
             env.unwrapped.common_step_counter = 0
         actor = runner.alg.get_policy()
-        if initial_std is not None:
-            with torch.no_grad():
-                std = actor.state_dict().get("distribution.std_param")
-                if std is None:
-                    raise ValueError("Actor has no distribution.std_param")
+        std = actor.state_dict().get("distribution.std_param")
+        if std is None:
+            raise ValueError("Actor has no distribution.std_param")
+        with torch.no_grad():
+            if initial_std is not None:
                 std.fill_(initial_std)
         calibration_iterations = 0
         if critic_calibration_steps:
@@ -3108,59 +4280,40 @@ def create_actor_initial_checkpoint(
         env.close()
 
 
-def _run_episode(
+def _profile_summaries(
+    runs: list[dict[str, Any]],
+    profiles: list[dict[str, Any]],
     stage_name: str,
-    profile_index: int,
-    seed: int,
-    checkpoint: Path,
-    device: str,
-) -> dict[str, Any]:
-    env, wrapped, runner = _load_runner(
-        stage_name, seed, profile_index, checkpoint, device
-    )
-    try:
-        wrapped.seed(seed)
-        obs, _ = wrapped.reset()
-        validate_policy_io(obs)
-        verify_reset_state(env)
-        policy = runner.get_inference_policy(device=device)
-        episode_return = 0.0
-        for _ in range(env.max_episode_length):
-            with torch.inference_mode():
-                action = policy(obs)
-                validate_policy_io(obs, action)
-                obs, reward, done, extras = wrapped.step(action)
-            if not torch.isfinite(reward).all():
-                raise FloatingPointError("Evaluation produced a non-finite reward")
-            episode_return += float(reward[0].item())
-            if bool(done[0].item()):
-                break
-        reward_term: XingtianReward = env.reward_manager.cfg["course"].func
+) -> list[dict[str, Any]]:
+    summaries = []
+    for profile in profiles:
+        profile_runs = [run for run in runs if run["profile"] == profile["name"]]
+        if not profile_runs:
+            continue
+        gate = resolved_profile_gate(COURSE, stage_name, profile)
+        metric_names = sorted(profile_runs[0]["metrics"])
         metrics = {
-            name: value[0].item()
-            for name, value in reward_term.metrics().items()
+            name: float(np.mean([float(run["metrics"][name]) for run in profile_runs]))
+            for name in metric_names
         }
-        nonfinite = [
-            name
-            for name, value in metrics.items()
-            if isinstance(value, (int, float)) and not math.isfinite(float(value))
-        ]
-        if nonfinite:
-            raise FloatingPointError(
-                f"Evaluation metrics are non-finite: {nonfinite}"
-            )
-        metrics["episode_return"] = episode_return
-        metrics["terminated"] = bool(env.reset_terminated[0].item())
-        metrics["truncated"] = bool(env.reset_time_outs[0].item())
-        profile = COURSE.stage(stage_name)["profiles"][profile_index]
-        return {
-            "seed": seed,
-            "profile": profile["name"],
-            "metrics": metrics,
-            "failures": gate_failures(metrics, COURSE.stage(stage_name)["gate"]),
-        }
-    finally:
-        env.close()
+        metrics["pass_rate"] = float(
+            np.mean([not run["failures"] for run in profile_runs])
+        )
+        failures = gate_failures(metrics, gate)
+        summaries.append(
+            {
+                "profile": profile["name"],
+                "task_type": profile_task_type(
+                    stage_name, COURSE.stage(stage_name), profile
+                ),
+                "episodes": len(profile_runs),
+                "resolved_gate": gate,
+                "metrics": metrics,
+                "failures": failures,
+                "passed": not failures,
+            }
+        )
+    return summaries
 
 
 def evaluate_checkpoint(
@@ -3169,41 +4322,107 @@ def evaluate_checkpoint(
     seeds: tuple[int, ...] | list[int],
     device: str = "cuda:0",
     fail_fast: bool = False,
+    profile_set: str = "required",
+    evaluation_mode: str = "exact",
+    eval_envs: int = 0,
+    include_raw_runs: bool = False,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     device = require_cuda(device)
     checkpoint = checkpoint.resolve()
     if not checkpoint.is_file():
         raise FileNotFoundError(checkpoint)
     stage = COURSE.stage(stage_name)
-    runs = []
+    if evaluation_mode not in {"fast", "exact"}:
+        raise ValueError("evaluation_mode must be 'fast' or 'exact'")
+    profiles = stage_profiles(stage, profile_set=profile_set)
+    if not profiles:
+        raise ValueError(f"Profile set '{profile_set}' is empty")
+    runs: list[dict[str, Any]] = []
     early_stopped = False
-    for profile_index in range(len(stage["profiles"])):
+    if evaluation_mode == "fast":
+        target_envs = eval_envs or min(1024, max(128, 32 * len(profiles)))
         for seed in seeds:
-            run = _run_episode(
-                stage_name, profile_index, int(seed), checkpoint, device
+            runs.extend(
+                run_vector_seed(
+                    stage_name,
+                    profiles,
+                    checkpoint,
+                    int(seed),
+                    device,
+                    target_envs,
+                )
             )
-            runs.append(run)
-            if fail_fast and run["failures"]:
+    else:
+        for seed in seeds:
+            seed_runs = run_exact_seed(
+                stage_name,
+                profiles,
+                checkpoint,
+                int(seed),
+                device,
+            )
+            runs.extend(seed_runs)
+            if fail_fast and any(run["failures"] for run in seed_runs):
                 early_stopped = True
                 break
-        if early_stopped:
-            break
-    passed = not early_stopped and fully_passes(
-        (run["metrics"] for run in runs),
-        stage["gate"],
-    )
+    summaries = _profile_summaries(runs, profiles, stage_name)
+    passed = not early_stopped and all(item["passed"] for item in summaries)
     result: dict[str, Any] = {
         "stage": stage_name,
         "checkpoint": str(checkpoint),
         "checkpoint_sha256": sha256(checkpoint),
         "iteration": _checkpoint_iteration(checkpoint),
         "seeds": list(map(int, seeds)),
-        "requested_runs": len(stage["profiles"]) * len(seeds),
+        "profile_set": profile_set,
+        "evaluation_mode": evaluation_mode,
+        "requested_runs": (
+            len(runs)
+            if evaluation_mode == "fast"
+            else len(profiles) * len(seeds)
+        ),
         "completed_runs": len(runs),
+        "wall_time_s": time.perf_counter() - started,
+        "environment_initializations": (
+            len(seeds)
+        ),
         "early_stopped": early_stopped,
-        "runs": runs,
+        "profiles": summaries,
+        "runs": runs if include_raw_runs or evaluation_mode == "exact" else [],
         "passed": passed,
     }
+    training_profile_count = len(stage.get("training_profiles", []))
+    if training_profile_count:
+        if COURSE.rehearsal_gate is None:
+            raise ValueError("Turning rehearsal gate is missing")
+        rehearsal_runs = []
+        training_profiles = stage_profiles(
+            stage,
+            include_training_profiles=True,
+            profile_set="all",
+        )[len(stage["profiles"]) :]
+        for seed in seeds:
+            rehearsal_runs.extend(
+                run_exact_seed(
+                    stage_name,
+                    training_profiles,
+                    checkpoint,
+                    int(seed),
+                    device,
+                    include_training_profiles=True,
+                )
+            )
+        result["rehearsal"] = {
+            "gate": COURSE.rehearsal_gate,
+            "requested_runs": training_profile_count * len(seeds),
+            "completed_runs": len(rehearsal_runs),
+            "runs": rehearsal_runs,
+            "passed": fully_passes(
+                (run["metrics"] for run in rehearsal_runs),
+                COURSE.rehearsal_gate,
+            ),
+        }
+        result["environment_initializations"] += len(seeds)
     if stage_name == "composite":
         scored = [
             gate_score(run["metrics"], stage["gate"]) for run in runs
@@ -3340,22 +4559,43 @@ def export_checkpoint(
 
 
 def _selection_metrics(result: dict[str, Any], gate: dict[str, Any]) -> dict[str, Any]:
-    scored = [gate_score(run["metrics"], gate) for run in result["runs"]]
+    scored = [
+        gate_score(item["metrics"], item["resolved_gate"])
+        for item in result["profiles"]
+    ]
     by_seed: dict[int, list[float]] = {}
-    for run, score in zip(result["runs"], scored, strict=True):
-        by_seed.setdefault(int(run["seed"]), []).append(float(score["score"]))
+    if result["runs"]:
+        for run in result["runs"]:
+            by_seed.setdefault(int(run["seed"]), []).append(
+                float(gate_score(run["metrics"], run["resolved_gate"])["score"])
+            )
+    else:
+        for seed in result["seeds"]:
+            by_seed[int(seed)] = [float(score["score"]) for score in scored]
     result = dict(result)
     result.update(
         {
             "score": float(np.mean([score["score"] for score in scored])),
-            "pass_rate": float(np.mean([score["passed"] for score in scored])),
+            "pass_rate": float(
+                np.mean([item["passed"] for item in result["profiles"]])
+            ),
             "worst_seed_score": min(float(np.mean(values)) for values in by_seed.values()),
             "minimum_margin": min(score["minimum_margin"] for score in scored),
             "mean_speed_mae_mps": float(
-                np.mean([run["metrics"]["speed_mae_mps"] for run in result["runs"]])
+                np.mean(
+                    [
+                        item["metrics"]["speed_mae_mps"]
+                        for item in result["profiles"]
+                    ]
+                )
             ),
             "mean_yaw_mae_rad_s": float(
-                np.mean([run["metrics"]["yaw_mae_rad_s"] for run in result["runs"]])
+                np.mean(
+                    [
+                        item["metrics"]["yaw_mae_rad_s"]
+                        for item in result["profiles"]
+                    ]
+                )
             ),
         }
     )
@@ -3366,9 +4606,11 @@ def select_policy_best(
     run_dir: Path,
     device: str = "cuda:0",
     stage_name: str = "composite",
+    eval_envs: int = 0,
 ) -> dict[str, Any]:
     device = require_cuda(device)
     run_dir = run_dir.resolve()
+    eval_envs = max(int(eval_envs), SELECTION_MIN_EVAL_ENVS)
     contract_path = run_dir / "contract.json"
     load_run_contract(contract_path, stage_name)
     stage = COURSE.stage(stage_name)
@@ -3397,6 +4639,8 @@ def select_policy_best(
                 [SELECTION_PROBE_SEED],
                 device,
                 fail_fast=True,
+                evaluation_mode="fast",
+                eval_envs=eval_envs,
             ),
             gate,
         )
@@ -3413,6 +4657,7 @@ def select_policy_best(
                 checkpoint,
                 SELECTION_VERIFY_SEEDS,
                 device,
+                evaluation_mode="exact",
             ),
             gate,
         )
@@ -3478,6 +4723,7 @@ def select_policy_best(
         "run_dir": str(run_dir),
         "probe_seed": SELECTION_PROBE_SEED,
         "verification_seeds": list(SELECTION_VERIFY_SEEDS),
+        "probe_eval_envs": eval_envs,
         "probe_count": len(probes),
         "verification_count": len(verifications),
         "qualified_count": len(qualified),

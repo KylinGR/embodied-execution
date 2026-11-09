@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "_description": "Single human-editable source for adaptive curriculum limits, timing, safety, and task gates.",
+  "baseline": {
+    "source_stage": "flat_turn_moving_080",
+    "protected_cells": {
+      "balance": [[0, 0]],
+      "straight": [[1, 0], [2, 0], [3, 0], [4, 0]],
+      "in_place_turn": [[0, 2], [0, 4]],
+      "moving_turn": [[2, 2], [3, 4]]
+    }
+  },
+  "review": {
+    "straight_speed_min_mps": 0.2,
+    "straight_speed_max_mps": 0.8,
+    "moving_turn_speed_max_mps": 0.6,
+    "moving_turn_yaw_max_rad_s": 0.8,
+    "in_place_yaw_min_rad_s": 0.4
+  },
+  "target": {
+    "straight_speed_max_mps": 1.0,
+    "moving_turn_speed_max_mps": 0.9,
+    "moving_turn_yaw_max_rad_s": 1.2,
+    "in_place_yaw_max_rad_s": 1.2
+  },
+  "safety": {
+    "min_turn_radius_m": 0.666667,
+    "max_turn_radius_m": 10.0,
+    "straight_yaw_deadband_rad_s": 0.05,
+    "turn_radius_window_min_speed_mps": 0.2,
+    "turn_radius_window_min_yaw_rad_s": 0.8
+  },
+  "timing": {
+    "balance_hold_s": 20.0,
+    "straight_settle_s": 2.0,
+    "straight_accel_s": 4.0,
+    "straight_cruise_s": 8.0,
+    "straight_decel_s": 4.0,
+    "in_place_settle_s": 2.0,
+    "in_place_yaw_ramp_s": 2.0,
+    "in_place_hold_s": 10.0,
+    "in_place_end_hold_s": 4.0,
+    "moving_turn_hold_s": 6.0,
+    "moving_turn_yaw_ramp_s": 2.0
+  },
+  "adaptive_grid": {
+    "vx_resolution_mps": 0.2,
+    "wz_resolution_rad_s": 0.2,
+    "protected_fraction": 0.35,
+    "protected_recovery_fraction": 0.5,
+    "window_size": 64,
+    "minimum_window_episodes": 64,
+    "expand_success_rate": 0.8,
+    "deactivate_success_rate": 0.5,
+    "protected_health_floor": 0.8,
+    "protected_health_windows": 2,
+    "consecutive_windows": 2,
+    "health_gate": {
+      "min_duration_fraction": "${gates.common.min_duration_fraction}",
+      "min_upright": "${gates.common.min_upright}",
+      "max_mean_abs_pitch_deg": "${gates.common.max_mean_abs_pitch_deg}",
+      "max_pitch_deg": "${gates.common.max_pitch_deg}",
+      "max_mean_abs_steady_pitch_deg": "${gates.common.max_mean_abs_steady_pitch_deg}",
+      "max_mean_abs_roll_deg": "${gates.common.max_mean_abs_roll_deg}",
+      "max_roll_deg": "${gates.common.max_roll_deg}",
+      "max_settled_mean_height_error_m": "${gates.common.max_settled_mean_height_error_m}",
+      "max_settled_height_deviation_m": "${gates.common.max_settled_height_deviation_m}"
+    },
+    "mode_minimum_fractions": {
+      "balance": 0.2,
+      "straight": 0.3,
+      "in_place_turn": 0.25,
+      "moving_turn": 0.25
+    },
+    "stop_after_motion_arm_speed_mps": 0.5
+  },
+  "gates": {
+    "common": {
+      "min_pass_rate": 0.9,
+      "min_duration_fraction": 0.98,
+      "min_upright": 0.87,
+      "max_mean_abs_pitch_deg": 4.0,
+      "max_pitch_deg": 10.0,
+      "max_mean_abs_steady_pitch_deg": 4.0,
+      "max_mean_abs_roll_deg": 4.5,
+      "max_roll_deg": 9.0,
+      "max_settled_mean_height_error_m": 0.03,
+      "max_settled_height_deviation_m": 0.06,
+      "max_wheel_center_offset_m": 0.035,
+      "max_transient_wheel_slip_mps": 0.28
+    },
+    "balance": {
+      "min_duration_fraction": 0.98,
+      "max_speed_mae_mps": 0.03,
+      "max_yaw_mae_rad_s": 0.02,
+      "min_upright": 0.93,
+      "max_mean_abs_pitch_deg": 3.5,
+      "max_mean_abs_steady_pitch_deg": 3.5,
+      "max_mean_abs_roll_deg": 3.5,
+      "max_roll_deg": 8.0,
+      "max_settled_mean_height_error_m": 0.025,
+      "max_settled_height_deviation_m": 0.05,
+      "max_settled_wheel_slip_mps": 0.08,
+      "max_hold_drift_m": 0.05,
+      "max_hold_drift_after_0.5s_m": 0.05,
+      "max_final_heading_error_deg": 5.0,
+      "max_heading_drift_after_0.5s_deg": 3.0,
+      "max_stop_speed_mps": 0.02
+    },
+    "straight": {
+      "max_speed_mae_mps": 0.14,
+      "max_cruise_speed_mae_mps": 0.12,
+      "min_cruise_speed_fraction": 0.8,
+      "max_yaw_mae_rad_s": 0.1,
+      "min_forward_progress_m": 1.0,
+      "max_backslide_mps": 0.28,
+      "max_cross_track_error_m": 0.18,
+      "max_final_heading_error_deg": 8.0,
+      "max_heading_drift_after_0.5s_deg": 4.0,
+      "max_stop_speed_mps": 0.04,
+      "max_final_speed_mps": 0.08,
+      "max_settled_straight_wheel_speed_difference_mps": 0.2
+    },
+    "in_place_turn": {
+      "max_speed_mae_mps": 0.08,
+      "max_yaw_mae_rad_s": 0.18,
+      "max_turn_angle_error_rad": 0.75,
+      "max_in_place_displacement_m": 0.2,
+      "max_yaw_rate_peak_rad_s": 1.45,
+      "max_final_heading_error_deg": 8.0
+    },
+    "moving_turn": {
+      "max_wheel_center_offset_m": 0.045,
+      "max_speed_mae_mps": 0.14,
+      "max_yaw_mae_rad_s": 0.18,
+      "max_turn_angle_error_rad": 0.75,
+      "max_s_turn_path_error_m": 0.3,
+      "max_segment_turn_angle_error_rad": 0.6,
+      "max_yaw_rate_peak_rad_s": 1.45,
+      "min_turn_radius_m": 0.666667,
+      "max_turn_radius_m": 10.0,
+      "max_backslide_mps": 0.28
+    },
+    "terrain": {
+      "max_speed_mae_mps": 0.25,
+      "max_yaw_mae_rad_s": 0.2,
+      "min_obstacle_passes": 1,
+      "max_backslide_mps": 0.5
+    },
+    "composite": {
+      "min_forward_progress_m": 20.0,
+      "min_obstacle_passes": 1,
+      "require_finish": true
+    }
+  }
+}

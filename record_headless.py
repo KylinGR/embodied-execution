@@ -11,8 +11,13 @@ import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 
-from diablo_training.contract import load_course, load_run_contract
+from diablo_training.contract import (
+    load_course,
+    load_run_contract,
+    reward_defaults_for_stage,
+)
 from diablo_training.mjlab_tasks import (
+    GAIT_JOINTS,
     WHEEL_JOINTS,
     WHEEL_RADIUS,
     _eval_env_cfg,
@@ -20,6 +25,7 @@ from diablo_training.mjlab_tasks import (
     validate_policy_io,
     verify_reset_state,
 )
+from diablo_training.model import JOINTS
 
 
 def has_contact(env, sensor_name: str) -> bool:
@@ -48,8 +54,7 @@ def main():
     course = load_course()
     stage = course.stage(args.stage)
     profile = stage["profiles"][args.profile_index]
-    reward_defaults = dict(course.reward_defaults)
-    reward_defaults.update(stage.get("reward_defaults", {}))
+    reward_defaults = reward_defaults_for_stage(course, args.stage)
     zero_tolerance = float(
         reward_defaults.get("zero_speed_tolerance_mps", 0.03)
     )
@@ -102,9 +107,18 @@ def main():
         robot = env.scene["robot"]
         wheel_ids, _ = robot.find_joints(WHEEL_JOINTS, preserve_order=True)
         wheel_ids = torch.tensor(wheel_ids, device=device, dtype=torch.long)
+        wheel_action_ids = [
+            JOINTS.index(name) for name in WHEEL_JOINTS
+        ]
+        leg_ids, _ = robot.find_joints(GAIT_JOINTS, preserve_order=True)
+        leg_ids = torch.tensor(leg_ids, device=device, dtype=torch.long)
+        wheel_body_ids = torch.tensor(
+            robot.find_bodies(("left_wheel", "right_wheel"))[0],
+            device=device,
+            dtype=torch.long,
+        )
         action_term = env.action_manager.get_term("joints")
         command_term = env.command_manager.get_term("course")
-        start_heading_rad = float(command_term.target_heading[0].item())
         holding = False
         hold_origin = None
         hold_drift_max = 0.0
@@ -112,6 +126,15 @@ def main():
         hold_drift_after_settle_max = 0.0
         wheel_difference_sum = 0.0
         wheel_target_difference_sum = 0.0
+        wheel_common_action_sum = 0.0
+        wheel_common_action_max = 0.0
+        wheel_differential_action_sum = 0.0
+        wheel_center_offset_sum = 0.0
+        wheel_center_offset_max = 0.0
+        hip_difference_sum = 0.0
+        hip_difference_max = 0.0
+        knee_difference_sum = 0.0
+        knee_difference_max = 0.0
 
         policy = runner.get_inference_policy(device=device)
 
@@ -133,7 +156,10 @@ def main():
             "vx_mps",
             "yaw_rate_rad_s",
             "command_vx",
+            "command_yaw",
+            "command_yaw_effective",
             "world_heading_deg",
+            "target_heading_deg",
             "heading_error_deg",
             "left_wheel_target_rad_s",
             "right_wheel_target_rad_s",
@@ -141,9 +167,20 @@ def main():
             "right_wheel_target_mps",
             "left_wheel_actual_rad_s",
             "right_wheel_actual_rad_s",
+            "left_wheel_action",
+            "right_wheel_action",
+            "wheel_common_action",
+            "wheel_differential_action",
             "left_wheel_linear_mps",
             "right_wheel_linear_mps",
             "wheel_speed_difference_mps",
+            "wheel_center_offset_signed_m",
+            "left_hip_offset_rad",
+            "right_hip_offset_rad",
+            "left_knee_offset_rad",
+            "right_knee_offset_rad",
+            "hip_difference_rad",
+            "knee_difference_rad",
             "hold_drift_m",
             "hold_drift_after_0.5s_m",
             "body_ground",
@@ -177,6 +214,9 @@ def main():
                 command = env.command_manager.get_command("course")[0]
                 command_vx = float(command[0].item())
                 command_yaw = float(command[1].item())
+                command_yaw_effective = float(
+                    command_term.yaw_target[0].item()
+                )
                 position_xy = robot.data.root_link_pos_w[0, :2]
                 standing = (
                     abs(command_vx) <= zero_tolerance
@@ -209,20 +249,77 @@ def main():
                 world_heading_deg = math.degrees(
                     float(robot.data.heading_w[0].item())
                 )
+                heading_rad = float(robot.data.heading_w[0].item())
+                target_heading_rad = float(
+                    command_term.target_heading[0].item()
+                )
+                target_heading_deg = math.degrees(target_heading_rad)
+                wheel_positions = robot.data.body_link_pos_w[
+                    0, wheel_body_ids
+                ]
+                wheel_center_offset_signed = float(
+                    (
+                        (wheel_positions[0, 0] - wheel_positions[1, 0])
+                        * math.cos(heading_rad)
+                        + (wheel_positions[0, 1] - wheel_positions[1, 1])
+                        * math.sin(heading_rad)
+                    ).item()
+                )
+                leg_offset = (
+                    robot.data.joint_pos[0, leg_ids]
+                    - robot.data.default_joint_pos[0, leg_ids]
+                )
+                left_hip_offset = float(leg_offset[0].item())
+                left_knee_offset = float(leg_offset[1].item())
+                right_hip_offset = float(leg_offset[2].item())
+                right_knee_offset = float(leg_offset[3].item())
+                hip_difference = left_hip_offset - right_hip_offset
+                knee_difference = left_knee_offset - right_knee_offset
+                wheel_center_offset_sum += wheel_center_offset_signed
+                wheel_center_offset_max = max(
+                    wheel_center_offset_max,
+                    abs(wheel_center_offset_signed),
+                )
+                hip_difference_sum += hip_difference
+                hip_difference_max = max(
+                    hip_difference_max,
+                    abs(hip_difference),
+                )
+                knee_difference_sum += knee_difference
+                knee_difference_max = max(
+                    knee_difference_max,
+                    abs(knee_difference),
+                )
                 heading_error_deg = math.degrees(
                     math.atan2(
                         math.sin(
-                            math.radians(world_heading_deg)
-                            - start_heading_rad
+                            heading_rad - target_heading_rad
                         ),
                         math.cos(
-                            math.radians(world_heading_deg)
-                            - start_heading_rad
+                            heading_rad - target_heading_rad
                         ),
                     )
                 )
                 wheel_target_rad_s = action_term.wheel_velocity_target[0]
                 wheel_actual_rad_s = robot.data.joint_vel[0, wheel_ids]
+                raw_wheel_action = action_term.raw_action[
+                    0, wheel_action_ids
+                ]
+                wheel_common_action = float(
+                    raw_wheel_action.mean().item()
+                )
+                wheel_differential_action = float(
+                    (
+                        0.5
+                        * (raw_wheel_action[1] - raw_wheel_action[0])
+                    ).item()
+                )
+                wheel_common_action_sum += wheel_common_action
+                wheel_common_action_max = max(
+                    wheel_common_action_max,
+                    abs(wheel_common_action),
+                )
+                wheel_differential_action_sum += wheel_differential_action
                 wheel_target_linear_mps = -wheel_target_rad_s * WHEEL_RADIUS
                 wheel_actual_linear_mps = -wheel_actual_rad_s * WHEEL_RADIUS
                 wheel_speed_difference = float(
@@ -274,7 +371,10 @@ def main():
                             robot.data.root_link_ang_vel_b[0, 2].item()
                         ),
                         "command_vx": command_vx,
+                        "command_yaw": command_yaw,
+                        "command_yaw_effective": command_yaw_effective,
                         "world_heading_deg": world_heading_deg,
+                        "target_heading_deg": target_heading_deg,
                         "heading_error_deg": heading_error_deg,
                         "left_wheel_target_rad_s": float(
                             wheel_target_rad_s[0].item()
@@ -294,6 +394,16 @@ def main():
                         "right_wheel_actual_rad_s": float(
                             wheel_actual_rad_s[1].item()
                         ),
+                        "left_wheel_action": float(
+                            raw_wheel_action[0].item()
+                        ),
+                        "right_wheel_action": float(
+                            raw_wheel_action[1].item()
+                        ),
+                        "wheel_common_action": wheel_common_action,
+                        "wheel_differential_action": (
+                            wheel_differential_action
+                        ),
                         "left_wheel_linear_mps": float(
                             wheel_actual_linear_mps[0].item()
                         ),
@@ -301,6 +411,15 @@ def main():
                             wheel_actual_linear_mps[1].item()
                         ),
                         "wheel_speed_difference_mps": wheel_speed_difference,
+                        "wheel_center_offset_signed_m": (
+                            wheel_center_offset_signed
+                        ),
+                        "left_hip_offset_rad": left_hip_offset,
+                        "right_hip_offset_rad": right_hip_offset,
+                        "left_knee_offset_rad": left_knee_offset,
+                        "right_knee_offset_rad": right_knee_offset,
+                        "hip_difference_rad": hip_difference,
+                        "knee_difference_rad": knee_difference,
                         "hold_drift_m": hold_drift,
                         "hold_drift_after_0.5s_m": hold_drift_after_settle,
                         "body_ground": int(body_ground),
@@ -345,6 +464,18 @@ def main():
             / (step + 1),
             "mean_wheel_target_difference_rad_s": wheel_target_difference_sum
             / (step + 1),
+            "mean_wheel_common_action": wheel_common_action_sum
+            / (step + 1),
+            "max_abs_wheel_common_action": wheel_common_action_max,
+            "mean_wheel_differential_action": wheel_differential_action_sum
+            / (step + 1),
+            "mean_wheel_center_offset_signed_m": wheel_center_offset_sum
+            / (step + 1),
+            "max_abs_wheel_center_offset_m": wheel_center_offset_max,
+            "mean_hip_difference_rad": hip_difference_sum / (step + 1),
+            "max_abs_hip_difference_rad": hip_difference_max,
+            "mean_knee_difference_rad": knee_difference_sum / (step + 1),
+            "max_abs_knee_difference_rad": knee_difference_max,
             "video": str(video_path),
             "csv": str(csv_path),
         }

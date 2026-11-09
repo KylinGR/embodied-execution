@@ -59,8 +59,10 @@
     "wheel_sync_tolerance_mps": 0.05,
     "straight_yaw_threshold_rad_s": 0.05,
     "acceleration_tolerance_mps2": 0.8,
-    "settled_heading_drift_weight": 0.75,
-    "overspeed_margin_fraction": 0.05
+    "settled_heading_drift_weight": 2.0,
+    "overspeed_margin_fraction": 0.05,
+    "heading_yaw_gain": 0.75,
+    "heading_yaw_correction_limit_rad_s": 0.2
   },
   "randomization": {
     "friction_min": 0.65,
@@ -80,7 +82,7 @@
       "hold_settle_time_s": 1.0,
       "termination_tilt_deg": 20.0,
       "profiles": [
-        {"name": "hold", "start": "start", "points": [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]]}
+        {"name": "hold", "task_type": "balance", "start": "start", "points": [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]]}
       ],
       "reward_weights": {
         "speed": 0.25,
@@ -141,15 +143,13 @@
         "max_mean_abs_steady_pitch_deg": 4.0,
         "max_settled_mean_height_error_m": 0.02,
         "max_settled_height_deviation_m": 0.04,
-        "max_cross_track_error_m": 0.03,
         "max_hold_drift_m": 0.05,
         "max_stop_speed_mps": 0.02,
         "max_settled_wheel_slip_mps": 0.08,
         "max_final_heading_error_deg": 3.0,
         "max_heading_drift_after_0.5s_deg": 3.0,
         "max_wheel_center_offset_m": 0.03,
-        "max_mean_settled_straight_wheel_speed_difference_mps": 0.04,
-        "min_stop_cycles": 0
+        "max_mean_settled_straight_wheel_speed_difference_mps": 0.04
       },
       "control": {
         "wheel_speed_loop": "pi",
@@ -210,10 +210,10 @@
       "terrain": {"kind": "flat", "length_m": 35.0, "width_m": 5.0},
       "limits": {"forward": 0.8, "backward": 0.4, "yaw": 1.0},
       "profiles": [
-        {"name": "turn_left", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 1.0], [7.0, 0.0, 1.0], [9.0, 0.0, 0.0], [11.0, 0.0, 0.0]]},
-        {"name": "turn_right", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, -1.0], [7.0, 0.0, -1.0], [9.0, 0.0, 0.0], [11.0, 0.0, 0.0]]},
-        {"name": "turn_forward", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.6, 0.5], [6.0, 0.6, 0.5], [8.0, 0.5, -0.5], [12.0, 0.5, -0.5], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]},
-        {"name": "turn_backward", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, -0.3, 0.4], [6.0, -0.3, 0.4], [8.0, -0.3, -0.4], [12.0, -0.3, -0.4], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]}
+        {"name": "turn_left", "task_type": "in_place_turn", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 1.0], [7.0, 0.0, 1.0], [9.0, 0.0, 0.0], [11.0, 0.0, 0.0]]},
+        {"name": "turn_right", "task_type": "in_place_turn", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, -1.0], [7.0, 0.0, -1.0], [9.0, 0.0, 0.0], [11.0, 0.0, 0.0]]},
+        {"name": "turn_forward", "task_type": "moving_turn", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.6, 0.5], [6.0, 0.6, 0.5], [8.0, 0.5, -0.5], [12.0, 0.5, -0.5], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]},
+        {"name": "turn_backward", "task_type": "moving_turn", "start": "start", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, -0.3, 0.4], [6.0, -0.3, 0.4], [8.0, -0.3, -0.4], [12.0, -0.3, -0.4], [14.0, 0.0, 0.0], [16.0, 0.0, 0.0]]}
       ],
       "reward_weights": {
         "speed": 1.0,

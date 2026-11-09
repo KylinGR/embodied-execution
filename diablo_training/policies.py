@@ -12,12 +12,13 @@ from tensordict import TensorDict
 from rsl_rl.models import MLPModel
 from rsl_rl.utils import unpad_trajectories
 
+from .model import WHEEL_HALF_TRACK
+
 PROPRIO_DIM = 125
 FRAME_DIM = 25
 HISTORY_LENGTH = 5
 HEIGHT_SCAN_DIM = 35
 PRIVILEGED_DIM = 11
-WHEEL_HALF_TRACK = 0.18755
 
 
 class _CausalBlock(nn.Module):
@@ -294,7 +295,9 @@ class XingtianSequenceModel(MLPModel):
                 raise TypeError(
                     f"Observations must be float32, got {observations.dtype}"
                 )
-        raw_current = observations[:, -FRAME_DIM:]
+        raw_current = observations[
+            :, PROPRIO_DIM - FRAME_DIM : PROPRIO_DIM
+        ]
         normalized = self.obs_normalizer(observations)
         return self.policy(normalized, raw_current)
 

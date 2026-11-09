@@ -59,6 +59,8 @@
 
 要求 Linux x86_64、Python 3.11/3.12、NVIDIA GPU，以及能运行所选 PyTorch CUDA wheel 的驱动。安装脚本默认使用 cu128 wheel；不匹配时可通过 `TORCH_INDEX_URL` 指定官方 PyTorch CUDA 索引。`gpu-doctor` 会在 CUDA 不可用时返回错误，不会降级到 CPU 训练。
 
+训练命令的 `--gpu-ids` 使用物理 GPU 编号。程序会在导入 CUDA 前设置 `CUDA_VISIBLE_DEVICES`，并把子进程参数重映射为本地编号；例如 `--gpu-ids 2` 在训练子进程中对应 `cuda:0`。遮蔽之后的 `--device` 也使用本地编号。
+
 ## 4. 安装
 
 ```bash
@@ -119,23 +121,70 @@ right_hip, right_knee, right_wheel
 | 顺序 | 阶段 | budget | 重点 |
 |---:|---|---:|---|
 | 1 | `flat_balance` | 40M | 高度、直立、静止和漂移 |
-| 2 | `flat_motion_010` | 6M | 0.1 m/s 低速起步 |
-| 3 | `flat_motion_020` | 8M | 0.2 m/s |
-| 4 | `flat_motion_030` | 6M | 0.3 m/s |
-| 5–13 | `flat_motion_040` … `flat_motion_200` | 每阶段 8M | 0.4–2.0 m/s |
-| 14 | `flat_motion` | 12M | 平地运动综合 |
-| 15 | `flat_turning` | 10M | 原地和行驶转向 |
-| 16 | `flat_start_stop` | 10M | 三次以上启停 |
-| 17 | `slope` | 14M | 30° 坡道 |
-| 18 | `rough` | 16M | 连续崎岖地形 |
-| 19 | `roller_obstacle` | 10M | 低高度可碾压障碍 |
-| 20 | `composite` | 22M | 长时综合任务 |
+| 2 | `flat_motion_020` | 8M | 0.2 m/s 最低直行速度 |
+| 3 | `flat_motion_030` | 6M | 0.3 m/s |
+| 4–7 | `flat_motion_040` … `flat_motion_100` | 每阶段 8M | 0.4–1.0 m/s |
+| 8 | `flat_motion` | 12M | 平地运动综合 |
+| 9 | `flat_turning` | 10M | 原地和行驶转向 |
+| 10 | `flat_start_stop` | 10M | 三次以上启停 |
+| 11 | `slope` | 14M | 30° 坡道 |
+| 12 | `rough` | 16M | 连续崎岖地形 |
+| 13 | `roller_obstacle` | 10M | 低高度可碾压障碍 |
+| 14 | `composite` | 22M | 长时综合任务 |
+
+独立转向专项课程从已通过 080 门限的 actor 热启动。提高 `target.straight_speed_max_mps` 后，主课程会自动纳入对应的速度阶梯阶段。
+
+| 顺序 | 阶段 | 速度指令 | 偏航角速度 | budget |
+|---:|---|---:|---:|---:|
+| 1 | `flat_turn_in_place_040` | 0 | ±0.4 rad/s | 4M |
+| 2 | `flat_turn_moving_040` | ±0.4 m/s | ±0.4 rad/s | 6M |
+| 3 | `flat_turn_in_place_080` | 0 | ±0.8 rad/s | 6M |
+| 4 | `flat_turn_moving_080` | ±0.6 m/s | ±0.8 rad/s | 8M |
+| 5 | `flat_turn_in_place_120` | 0 | ±1.2 rad/s | 8M |
+| 6 | `flat_turn_moving_120` | ±0.9 m/s | ±1.2 rad/s | 10M |
+
+`flat_turn_moving_080` 是保留的历史任务标识；720 实际训练和 rollout 使用的是 `0.6 m/s × 0.8 rad/s`。
+所有新训练阶段统一使用默认姿态实测的轮中心半轮距 `0.24125 m`。策略内部 yaw 估计、轮速前馈和奖励归一化使用同一值；转向阶段启用 common residual 限幅 `0.2`。
+| 7 | `flat_turn_in_place_160_200` | 0 | ±1.6–2.0 rad/s | 12M |
+
+原地 0.4 rad/s 阶段分别执行顺时针和逆时针一整圈。从 0.8 rad/s 开始的原地阶段，两个 profile 分别为顺时针和逆时针旋转：静止 2 秒、1 秒建立角速度、保持目标角速度 10 秒、1 秒回零、静止 2 秒。
+
+行驶 S 弯阶段的前进和后退 profile 结构相同：静止后加速到速度上限，保持直线行驶，再分别经历顺时针、逆时针角速度斜坡和保持段；最终回正、减速到零。`flat_turn_moving_120` 使用 `±0.9 m/s` 和 `±1.2 rad/s`，命令曲率半径为 `0.75 m`。
+
+转向阶段的终止倾角不随角速度放宽：低角速度使用 18°，1.2 rad/s 阶段收紧到 16°。正常转弯所需的滚转由 roll 奖励、`max_roll_deg` gate 和 TensorBoard 中独立的 roll/pitch 指标约束。
+
+每个阶段还记录实际 `yaw_rate_peak_rad_s`。所有行驶转弯阶段不超过 1.2 rad/s；原地最终边界阶段实测峰值不得超过 2.0 rad/s。
+
+所有转向阶段同时使用 yaw 欠速 Huber 惩罚，避免策略停在高斯奖励的零梯度区。所有阶段的训练容差统一收紧到对应 gate 的 80% 以内；例如原地 0.4 rad/s 阶段的 `max_yaw_mae_rad_s` 为 `0.06`，奖励容差为 `0.048 rad/s`。
+
+yaw 目标在所有阶段都增加闭环航向修正：在原始 yaw 指令上叠加 `-0.75 × heading_error`，修正量限制为 `±0.2 rad/s` 并最终钳位到硬限幅 `±2.0 rad/s`。该目标同时用于策略观测、轮速前馈、奖励和 yaw 指标，因此终点静止阶段可以主动补转航向，而不会因“零 yaw 命令”抑制纠偏。
+
+原地阶段训练包含至少 25% 的前进/后退排练。`flat_turn_in_place_120` 提高到 30%，并使用 `±0.8 m/s` 排练以保留已训练的直行能力；其余原地阶段使用 `±0.4 m/s`。排练使用 2 秒静止、4 秒加速、4 秒巡航、4 秒减速和 2 秒静止；`flat_turn_in_place_040` 的总时长更短。排练使用独立 `rehearsal_gate` 评估，结果写入 `result.json` 的 `rehearsal` 字段，不改变原转向 gate 或主 `passed` 结果。
+
+奖励与 gate 还同时累计带符号的实际转角和指令转角，记录 `actual_turn_angle_rad`、`commanded_turn_angle_rad`、`turn_angle_error_rad`，使用 `max_turn_angle_error_rad` 门限。所有转向阶段对轮中心偏移增加小权重惩罚，而不只在直行阶段优化轮对齐。
+
+转向时对轮中心偏移的惩罚超过训练容差后继续连续增长，不再在 gate 附近饱和。训练和回放同时记录带符号轮心偏移、左右髋膝相对默认姿态的偏移，以及左右髋/膝差值；这些指标按 clockwise/counterclockwise profile 分开记录，用于定位方向不对称。`leg_symmetry` 奖励只在转向控制期间启用。
+
+转向课程恢复 RSL-RL 自适应学习率，并在转向 runner 内把学习率上限硬限制为 `1e-3`，与同类轮足/足式项目常用的初始学习率对齐，同时阻止原生调度把学习率继续推到 `1e-2`。actor 的高斯 std 不再在训练期间做持续范围钳位；warm-start 默认保留源 actor 的探索参数，使用 `--initial-std` 可显式覆盖。熵系数保持 `0.002`，第一轮先验证动作饱和与 KL 调度，避免同时改变多个变量。
+
+轮速动作入口对偏航命令实施 `±2.0 rad/s` 硬钳位，避免部署包装器绕过课程上限。
+
+轮速残差分为共模 `(left+right)/2` 与差模 `left-right`。只有有效 yaw 指令超过 `0.05 rad/s` 时才把共模限制在归一化动作的 `±0.2`，直行阶段保留原残差；差模不限幅。`wheel_common_residual` 奖励同样只在转向阶段生效。共模/差模还会记录到 TensorBoard、evaluation 和回放 CSV。
+
+自适应速度课程由 `flat_adaptive_speed_stages.json` 定义，所有可调上限和时间来自 `training_objectives.json`。保护网格从平衡、0.2–0.8 m/s 直行、`±0.4/±0.8 rad/s` 原地转向和已验证的 `0.6 m/s × 0.8 rad/s` 行驶转弯开始，按每个二维单元的核心健康成功率扩张；最终再用任务 gate 验收。道路转弯通过 `R=|vx|/|wz|` 校验，仅激活 `0.667–10 m` 内的单元；行驶转弯速度单独限制为 `0.9 m/s`。
+
+保护集以 720 的实际训练上限为准：平衡、直行 0.2–0.8 m/s、原地 0.4–0.8 rad/s，以及 `0.4 × 0.4`、`0.6 × 0.8` 两个行驶转弯单元。原地 1.0/1.2 rad/s、直行 1.0 m/s 和 `0.8 × 0.8` 都属于后续扩张目标。课程健康与扩张只检查持续时间、直立、俯仰、横滚和高度安全：protected health 要求连续两个窗口达到 0.8，普通单元连续两个窗口核心安全成功率达到 0.8 后扩张。模式不健康时只提高该模式的 protected 回放比例；最终发布仍使用全指标、512 episode 和 0.9 通过率，不复用为课程门槛。
+
+该阶段 PPO 初始学习率为 `5e-5`，并设置硬上限 `1e-4`；actor 高斯 std 限制在 `[0.05, 0.35]`。这限制了 KL 自适应调度抬升学习率以及熵奖励扩张探索方差的范围。
+RSL-RL 在每次策略前向时对有效 std 执行 clamp，因此该范围是硬约束。优先观察 `Loss/learning_rate`、`Policy/mean_noise_std` 与 target profile 的速度误差趋势；只有高速能力停滞且旧技能 gate 仍通过时，才在下一 run 将 `std_max` 小幅提高到 `0.40`。
+
+训练先按每个 cell 的 episode 成功率生成窗口，同时保留 35% 的旧技能复习配额；保护技能异常时自动提高到 50%。评测 profile 分为 baseline、target 和 diagnostic，只有 baseline + target 参与默认通过判定。
 
 速度阶梯使用连续三档参数，而不是逐阶段独立试参：
 
 | 速度范围 | 跟踪/欠速权重 | 高度/直立/俯仰 | 动作率/跌倒 | 主要目的 |
 |---|---|---|---|---|
-| `0.1–0.4 m/s` | `2.8–3.3 / 1.0–1.2` | `1.5–1.8 / 1.9–2.2 / 1.9–2.2` | `0.04 / 40` | 稳定起步、启停和零速保持 |
+| `0.2–0.4 m/s` | `2.8–3.3 / 1.0–1.2` | `1.5–1.8 / 1.9–2.2 / 1.9–2.2` | `0.04 / 40` | 稳定起步、启停和零速保持 |
 | `0.6–1.0 m/s` | `3.4–3.6 / 1.0` | `1.2–1.4 / 1.1–1.5 / 0.9–1.3` | `0.04–0.045 / 35–30` | 从姿态主导过渡到速度跟踪主导 |
 | `1.2–2.0 m/s` | `3.7–4.2 / 1.1–1.4` | `1.0–1.15 / 0.8–1.0 / 0.6–0.8` | `0.05–0.06 / 30–25` | 高速跟踪、制动和轮地稳定 |
 
@@ -239,6 +288,34 @@ diablo course-train \
   --log-root logs/rsl_rl
 ```
 
+从 080 开始运行独立转向主干课程：
+
+```bash
+diablo course-train \
+  --course turning \
+  --warm-start logs/rsl_rl/diablo_xingtian_course/<080-run>/model_0.pt \
+  --critic-calibration-steps 98304 \
+  --n-envs 4096 \
+  --gpu-ids 0 \
+  --log-root logs/rsl_rl
+```
+
+`course-train --course turning` 只运行 7 个主干阶段，并对最后阶段同样执行 gate。
+
+运行自适应速度扩展阶段：
+
+```bash
+diablo train \
+  --stage flat_adaptive_speed \
+  --warm-start logs/rsl_rl/diablo_xingtian_course/<turn-run>/model_<iter>.pt \
+  --critic-calibration-steps 98304 \
+  --n-envs 4096 \
+  --gpu-ids 0 \
+  --log-root logs/rsl_rl
+```
+
+如果现有策略在同一个 checkpoint 中已经保留平衡、0.8 m/s 直行和原地转向，直接从这个 checkpoint 热启动；不需要同时合并多个 checkpoint。
+
 每个前置阶段结束时会评估最后 checkpoint；最终综合阶段改为检查该 run 的全部周期 checkpoint。初段验证种子为：
 
 ```text
@@ -269,13 +346,14 @@ diablo train \
 
 ```bash
 diablo train \
-  --stage flat_motion_010 \
+  --stage flat_motion_020 \
   --warm-start logs/rsl_rl/diablo_xingtian_course/<run>/model_<iter>.pt \
   --transfer actor \
   --initial-std 0.3
 ```
 
 该命令接受与当前 `temporal_residual_v1` 架构一致的 RSL-RL `.pt` checkpoint。旧 MLP checkpoint、`diablo-rsl-actor-v1` actor bundle 和外部 SB3 `.zip` 不再用于新策略热启动。`--warm-start` 与 `--resume` 互斥，并始终创建新 run、新 optimizer 和迭代 0。
+`flat_adaptive_speed` 不再限制必须来自 720 或任何特定源阶段；任意通过 actor 接口校验的 RSL-RL checkpoint 都可以启动新 run。
 
 来自本项目 run 的权重会同时校验接口和策略架构契约；跨课程阶段复用 actor 时必须形如本项目的统一时序残差网络。
 
@@ -336,6 +414,7 @@ diablo course-train --n-envs 8192 --gpu-ids 0,1
 ```bash
 diablo select-best \
   --run-dir logs/rsl_rl/diablo_xingtian_course/<run> \
+  --stage composite \
   --device cuda:0
 ```
 
@@ -376,8 +455,11 @@ play Mjlab-Xingtian-Composite \
 diablo evaluate \
   --stage composite \
   --checkpoint <run>/policy-best.pt \
-  --seeds 2001,2002,2003
+  --seeds 2001,2002,2003 \
+  --eval-mode fast
 ```
+
+`fast` 在单个 MJLab 向量环境中并行运行不同 profile，并至少给每个 profile 分配 32 个 episode；`exact` 保留同 seed/profile 的严格配对语义，用于最终复核。`--profile-set` 可选 `required`、`all`、`baseline`、`target` 和 `diagnostic`。自适应 run 使用 `select-best --stage flat_adaptive_speed`。
 
 导出任意 checkpoint：
 

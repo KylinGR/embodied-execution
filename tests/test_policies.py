@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 try:
     import torch
@@ -80,6 +81,7 @@ class PolicyTests(unittest.TestCase):
             actor.distribution.std_param,
             torch.full((6,), 0.3),
         )
+        self.assertEqual(actor.distribution.std_range, [1e-6, 1e6])
         self.assertTrue(
             all(not key.startswith("mlp.") for key in actor.state_dict())
         )
@@ -101,6 +103,40 @@ class PolicyTests(unittest.TestCase):
         self.assertGreater(
             torch.abs(baseline[:, -1] - modified[:, -1]).max().item(),
             0.0,
+        )
+
+    def test_critic_uses_proprio_tail_as_current_frame(self):
+        obs = self.make_observations(batch=1)
+        critic = XingtianSequenceModel(
+            obs,
+            self.obs_groups,
+            "critic",
+            1,
+            hidden_dims=(256, 256),
+            activation="swish",
+            obs_normalization=True,
+        )
+        critic_obs = torch.arange(
+            PROPRIO_DIM + HEIGHT_SCAN_DIM + PRIVILEGED_DIM,
+            dtype=torch.float32,
+        ).unsqueeze(0)
+        obs["critic"] = critic_obs
+        captured = {}
+        original = critic.policy.proprio.forward
+
+        def capture(proprio, raw_current):
+            captured["raw_current"] = raw_current.detach().clone()
+            return original(proprio, raw_current)
+
+        with mock.patch.object(
+            critic.policy.proprio,
+            "forward",
+            side_effect=capture,
+        ):
+            critic(obs)
+        torch.testing.assert_close(
+            captured["raw_current"],
+            critic_obs[:, PROPRIO_DIM - 25 : PROPRIO_DIM],
         )
 
     def test_leg_and_wheel_heads_follow_public_action_order(self):
