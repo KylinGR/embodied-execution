@@ -89,6 +89,9 @@ STAGES: dict[str, dict[str, Any]] = {
             _pt(12.0), _pt(15.0, 0.4), _pt(19.0),
         ],
     },
+    # 直线高速：配置允许 1.0 m/s，但 A 阶段只测过 0.5，单独加两档验证上限
+    "forward_fast_08": {"duration": 15.0, "profile": [_pt(0.0), _pt(1.0, 0.8)]},
+    "forward_fast_10": {"duration": 15.0, "profile": [_pt(0.0), _pt(1.0, 1.0)]},
     # 低速→高速→中速，看定速和过渡
     "accel": {
         "duration": 14.0,
@@ -134,6 +137,14 @@ THRESHOLDS: dict[str, dict[str, float]] = {
     "turn_in_motion": {"yaw_mae_turn": 0.15, "speed_rel_err_turn": 0.15},
     "start_stop": {"n_cycles": 3.0, "rise_time_s": 0.8, "stop_distance_m": 0.08},
     "accel": {"speed_rel_err": 0.10},
+    "forward_fast_08": {
+        "speed_rel_err": 0.08, "distance_ratio": 0.90, "lateral_drift_m": 0.08,
+        "heading_deg": 3.0, "rise_time_s": 0.8, "overshoot": 0.10,
+    },
+    "forward_fast_10": {
+        "speed_rel_err": 0.08, "distance_ratio": 0.90, "lateral_drift_m": 0.08,
+        "heading_deg": 3.0, "rise_time_s": 0.8, "overshoot": 0.10,
+    },
     # 高度只判波动/标准差；与指令的偏差依赖尚未标定的 base_z 基准，不判通过
     "height": {"ripple_m": 0.04, "std_m": 0.015},
 }
@@ -663,7 +674,8 @@ def judge(stage: str, m: dict[str, Any]) -> tuple[bool, list[str]]:
         hi("tilt_rms_deg", th["tilt_rms_deg"], "倾角 RMS", "{:.2f}°")
         hi("tilt_max_deg", th["tilt_max_deg"], "倾角峰值", "{:.1f}°")
 
-    if stage in ("forward", "backward", "accel"):
+    if stage in ("forward", "backward", "accel",
+                 "forward_fast_08", "forward_fast_10"):
         hi("speed_rel_err", th["speed_rel_err"], "速度误差", "{:.0%}")
         if stage != "accel":
             lo("distance_ratio", th["distance_ratio"], "位移比", "{:.0%}")

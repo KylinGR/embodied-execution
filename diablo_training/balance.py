@@ -68,6 +68,12 @@ STOP_ANCHOR_EACH = 0.0  # 1=每个停车周期都重钉行程参考；0=只在�
 # 实测（100 Hz 控制周期）：10 ms 延迟 start_stop 就开始掉、20 ms 连站立都崩。
 TH_PREDICT_S = 0.0
 
+# 无记忆模式：关掉内部积分器（psi_ref / s_ref / i_th），让控制律只依赖当前状态。
+# 用途是行为克隆——student 只有 125 维观测（0.5 s 历史），无法重建从 0 秒积分到
+# 现在的参考量；带积分器的 teacher 学不了（实测 student 原地自转 24.6 °/s）。
+# 代价：朝向和站位会漂，teacher 自己的成绩会下降。
+MARKOV_ONLY = 0.0
+
 # 制动段专用增益。k_*_scale 是相对 STAND 的缩放。
 # 实测（start_stop, 3 次启停）：停车距离 0.099 → 0.067 m，min_upright 0.934。
 #   k_v 加大是主因：原 30 时速度误差 0.4 m/s 只出 -12 N·m，且只维持一个周期；
@@ -187,15 +193,20 @@ def compute(state: dict[str, float], data, model, base_id: int,
     else:
         state["stopped"] = 0.0
 
-    state["s_ref"] += vx_ref * dt
-    state["psi_ref"] += wz_ref * dt
+    if not MARKOV_ONLY:
+        state["s_ref"] += vx_ref * dt
+        state["psi_ref"] += wz_ref * dt
 
     braking = stopping and abs(v) > STOP["exit_v"]
     # 俯仰积分：只在非制动段累积，制动时冻结（否则松刹车会被积分项推着走）
-    if not braking:
+    if MARKOV_ONLY:
+        state["i_th"] = 0.0
+    elif not braking:
         state["i_th"] = float(np.clip(state["i_th"] + th * dt, -I_TH_LIMIT, I_TH_LIMIT))
 
     k_th, k_thd, k_x, k_v, ki_th, clamp = _gains(vx_target, braking)
+    if MARKOV_ONLY:
+        k_x = 0.0
 
     # 延迟补偿：用 θ + θ̇·τ 近似"力矩真正作用到轮子时"的俯仰角
     th_ctl = th + thd * TH_PREDICT_S if TH_PREDICT_S else th
@@ -223,7 +234,7 @@ def compute(state: dict[str, float], data, model, base_id: int,
         k_th=k_th, k_thd=k_thd, k_x=k_x, k_v=k_v, clamp=clamp,
     )
 
-    e_psi = (psi - state["psi_ref"] + np.pi) % (2.0 * np.pi) - np.pi
+    e_psi = 0.0 if MARKOV_ONLY else (psi - state["psi_ref"] + np.pi) % (2.0 * np.pi) - np.pi
     turn = float(
         np.clip(-(YAW["k_w"] * (wz - wz_ref) + YAW["k_psi"] * e_psi),
                 -YAW["clamp"], YAW["clamp"])

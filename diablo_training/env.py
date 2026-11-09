@@ -36,7 +36,7 @@ class Config:
             raise ValueError(
                 "Episode duration and command speed must be finite and positive"
             )
-        if self.action_mode not in ("position_velocity", "torque"):
+        if self.action_mode not in ("position_velocity", "torque", "wheel_torque"):
             raise ValueError("Unknown action_mode")
 
 

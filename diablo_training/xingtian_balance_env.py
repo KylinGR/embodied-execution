@@ -61,6 +61,8 @@ I_TH_LIMIT = 0.6
 
 # 延迟补偿默认值（毫秒）；实际由 BalanceConfig.delay_comp_ms 覆盖，便于扫档
 DELAY_COMP_MS = 0.0
+# 无记忆模式（关掉积分器），给行为克隆当 teacher 用
+MARKOV_ONLY = 0.0
 
 # 腿部 PD（固定到 DEFAULT_Q）
 LEG_KP = 60.0
@@ -75,6 +77,9 @@ class BalanceConfig(XingtianConfig):
 
     randomization: dict[str, Any] | None = None
     delay_comp_ms: float = 0.0
+    markov_only: bool = False
+    stand_kv: float | None = None
+    move_kv: float | None = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -109,7 +114,7 @@ def _install_params() -> None:
         ("TAU_UP", TAU_UP), ("TAU_DOWN", TAU_DOWN),
         ("STOP_THRESHOLD", STOP_THRESHOLD), ("STOP_ANCHOR_EACH", STOP_ANCHOR_EACH),
         ("TORQUE_CLAMP", TORQUE_CLAMP), ("I_TH_LIMIT", I_TH_LIMIT),
-        ("TH_PREDICT_S", DELAY_COMP_MS / 1000.0),
+        ("TH_PREDICT_S", DELAY_COMP_MS / 1000.0), ("MARKOV_ONLY", MARKOV_ONLY),
     ):
         setattr(balance, name, value)
 
@@ -129,6 +134,14 @@ class XingtianBalanceEnv(XingtianFlatEnv):
         self._torque_scale = 1.0
         # 延迟补偿量由 config 决定（毫秒 → 秒）
         balance.TH_PREDICT_S = float(getattr(self.config, "delay_comp_ms", 0.0)) / 1000.0
+        # 无记忆模式：给行为克隆当 teacher 时打开
+        balance.MARKOV_ONLY = 1.0 if getattr(self.config, "markov_only", False) else 0.0
+        # 无记忆模式下位置积分没了，靠提高速度增益压稳态误差
+        # （实测 stand 漂移 0.062 → 0.0035，forward 速度误差 5.2% → 5.0%）
+        if getattr(self.config, "stand_kv", None) is not None:
+            balance.STAND["k_v"] = float(self.config.stand_kv)
+        if getattr(self.config, "move_kv", None) is not None:
+            balance.MOVE["k_v"] = float(self.config.move_kv)
         # 名义值快照：每回合先把模型恢复成名义值，再采样扰动
         self._nominal_mass = self.model.body_mass.copy()
         self._nominal_inertia = self.model.body_inertia.copy()
