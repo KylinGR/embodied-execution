@@ -14,6 +14,15 @@ def radial_feedforward(motor_q, force=60.0):
 def decode_action(action, motor_q, motor_dq, mode="position_velocity"):
     if mode == "torque":
         requested = action * STALL_TORQUE * OBSERVATION_SIGNS
+    elif mode == "wheel_torque":
+        # 腿：和解析控制器同一套 PD（kp=60, kd=2）固定到 DEFAULT_Q。
+        # 注意不能用 pv 模式的 15/18——那套软 4 倍，托不住机身（实测 132 步就摔）。
+        # 这里用显式下标，避免再改 control.py 的 import。
+        requested = np.zeros(6)
+        for _j in (0, 1, 3, 4):
+            requested[_j] = 60.0 * (DEFAULT_Q[_j] - motor_q[_j]) - 2.0 * motor_dq[_j]
+        # 轮：动作直接映射成力矩，全权限（±STALL_TORQUE）
+        requested[WHEELS] = action[WHEELS] * STALL_TORQUE * OBSERVATION_SIGNS[WHEELS]
     elif mode == "position_velocity":
         requested = np.array([15, 18, 0, 15, 18, 0]) * (
             DEFAULT_Q + action * 0.5 - motor_q

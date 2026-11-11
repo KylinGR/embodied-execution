@@ -1,0 +1,57 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "XINGTIAN: doctor",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "diablo_training.cli",
+      "args": ["doctor"],
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "justMyCode": true
+    },
+    {
+      "name": "XINGTIAN: benchmark subprocess",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "diablo_training.cli",
+      "args": [
+        "benchmark",
+        "--vec-env",
+        "subproc",
+        "--n-envs",
+        "4",
+        "--steps",
+        "20"
+      ],
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "justMyCode": true
+    },
+    {
+      "name": "XINGTIAN: short training",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "diablo_training.cli",
+      "args": [
+        "train",
+        "--config",
+        "examples/xingtian_reference.json",
+        "--device",
+        "auto",
+        "--vec-env",
+        "dummy",
+        "--n-envs",
+        "2",
+        "--steps",
+        "2048",
+        "--output",
+        "runs/xingtian-debug"
+      ],
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "justMyCode": true
+    }
+  ]
+}

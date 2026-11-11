@@ -1,7 +1,7 @@
 """Fetch, check, train, evaluate and export a simulation-only DIABLO policy."""
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
@@ -105,26 +105,79 @@ def smoke(args):
         env.close()
 
 
+def benchmark(args):
+    """Measure MuJoCo throughput before committing a long training budget."""
+    from .env import DiabloEnv
+    from .parallel import make_vector_env
+
+    out = fresh_directory(args.output, "benchmark")
+    env, resolved_kind = make_vector_env(
+        DiabloEnv,
+        None,
+        n_envs=args.n_envs,
+        kind=args.vec_env,
+        monitor_path=str(out / "episodes.csv"),
+        start_method=args.subproc_start_method,
+    )
+    began = time.monotonic()
+    try:
+        env.seed(args.seed)
+        env.reset()
+        actions = np.zeros((args.n_envs, 6), dtype=np.float32)
+        for _ in range(args.warmup_steps):
+            env.step(actions)
+        measured_began = time.monotonic()
+        for _ in range(args.steps):
+            env.step(actions)
+        wall_seconds = time.monotonic() - measured_began
+        transitions = args.steps * args.n_envs
+        result = {
+            "vec_env": resolved_kind,
+            "n_envs": args.n_envs,
+            "control_steps_per_env": args.steps,
+            "transitions": transitions,
+            "measured_wall_seconds": wall_seconds,
+            "transitions_per_second": transitions / max(wall_seconds, 1e-12),
+            "total_wall_seconds": time.monotonic() - began,
+            "note": (
+                "This measures MuJoCo data collection only. Compare configurations "
+                "on the same machine and load; PPO update speed is separate."
+            ),
+        }
+        write_json(out / "result.json", result)
+        print(json.dumps({"output": str(out), **result}, ensure_ascii=False))
+    finally:
+        env.close()
+
+
+def select_best(args):
+    from .select_best import run_selection
+
+    return run_selection(args)
+
+
 def parameter_digest(policy):
     state = b"".join(p.detach().cpu().numpy().tobytes() for p in policy.parameters())
     return hashlib.sha256(state).hexdigest()
 
 
 def train(args):
-    import torch
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import CheckpointCallback
-    from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
-    from .env import Config
     from .model import metadata
+    from .parallel import configure_torch, make_vector_env, resolve_device
     from .contract import (
         environment_class,
+        import_class,
         policy_contract,
         require_compatible,
         require_checkpoint,
     )
 
-    torch.set_num_threads(1)
+    if args.resume and args.warm_start:
+        raise ValueError("--resume and --warm-start are different workflows")
+    device = resolve_device(args.device)
+    configure_torch(device, args.cpu_threads, args.gpu_fraction)
     out = fresh_directory(args.output, "train")
     settings = {
         "n_steps": 128,
@@ -137,11 +190,14 @@ def train(args):
         "policy_kwargs": {"net_arch": [128, 128]},
     }
     task_class = "diablo_training.env:DiabloEnv"
+    config_class = "diablo_training.env:Config"
     if args.resume:
         previous = json.loads(
             configuration_path(Path(args.resume).resolve()).read_text()
         )
-        config = Config(**previous["environment"])
+        config_class = previous.get("config_class", config_class)
+        config_type = import_class(config_class)
+        config = config_type(**previous["environment"])
         task_class = previous.get("environment_class", task_class)
         settings = previous["ppo"]
         if args.config:
@@ -154,14 +210,23 @@ def train(args):
             )
     else:
         supplied = json.loads(args.config.read_text()) if args.config else {}
-        if set(supplied) - {"environment", "ppo", "environment_class"}:
-            raise ValueError("Config keys: environment, ppo, environment_class")
+        if set(supplied) - {
+            "environment",
+            "ppo",
+            "environment_class",
+            "config_class",
+        }:
+            raise ValueError(
+                "Config keys: environment, ppo, environment_class, config_class"
+            )
         parameters = supplied.get("environment", {}).copy()
         if args.max_speed is not None:
             parameters["max_speed"] = args.max_speed
         if args.noise:
             parameters["observation_noise"] = True
-        config = Config(**parameters)
+        config_class = supplied.get("config_class", config_class)
+        config_type = import_class(config_class)
+        config = config_type(**parameters)
         settings.update(supplied.get("ppo", {}))
         if set(settings) & {
             "env",
@@ -173,35 +238,74 @@ def train(args):
         }:
             raise ValueError("Use CLI options for environment, seed and device")
         task_class = supplied.get("environment_class", task_class)
+    if not is_dataclass(config):
+        raise TypeError("Environment configuration must be a dataclass")
     cls = environment_class(task_class)
-    env = VecMonitor(
-        DummyVecEnv([lambda: cls(config) for _ in range(args.n_envs)]),
-        filename=str(out / "episodes.csv"),
+    env, resolved_vec_env = make_vector_env(
+        cls,
+        config,
+        n_envs=args.n_envs,
+        kind=args.vec_env,
+        monitor_path=str(out / "episodes.csv"),
+        start_method=args.subproc_start_method,
     )
+    contract_env = cls(config)
     model = None
     began = time.monotonic()
     try:
-        contract = policy_contract(env.venv.envs[0])
+        contract = policy_contract(contract_env)
         if args.resume:
-            require_compatible(previous, env.venv.envs[0])
-        model = (
-            PPO.load(
+            require_compatible(previous, contract_env)
+        if args.resume:
+            model = PPO.load(
                 args.resume,
                 env=env,
-                device=args.device,
+                device=device,
                 tensorboard_log=str(out / "tensorboard"),
             )
-            if args.resume
-            else PPO(
+        else:
+            model = PPO(
                 "MlpPolicy",
                 env,
                 **settings,
-                device=args.device,
+                device=device,
                 seed=args.seed,
                 verbose=1,
                 tensorboard_log=str(out / "tensorboard"),
             )
-        )
+            if args.warm_start:
+                source_resolved = json.loads(
+                    configuration_path(Path(args.warm_start).resolve()).read_text()
+                )
+                source_contract = source_resolved["contract"]
+                if source_contract["action_mode"] != contract["action_mode"]:
+                    raise ValueError(
+                        "Warm-start action semantics changed between stages"
+                    )
+                if (
+                    source_contract["observation"]["shape"]
+                    != contract["observation"]["shape"]
+                ):
+                    raise ValueError(
+                        "Warm-start observation contract changed between stages"
+                    )
+                if (
+                    source_contract["model"]["control_dt_s"]
+                    != contract["model"]["control_dt_s"]
+                ):
+                    raise ValueError("Warm-start control period changed between stages")
+                for key in ("joints", "actuators", "closure_constraints"):
+                    if source_contract["model"][key] != contract["model"][key]:
+                        raise ValueError(
+                            f"Warm-start robot contract changed for {key}"
+                        )
+                source = PPO.load(args.warm_start, device=device)
+                if source.observation_space.shape != env.observation_space.shape:
+                    raise ValueError("Warm-start observation shape is incompatible")
+                if source.action_space.shape != env.action_space.shape:
+                    raise ValueError("Warm-start action shape is incompatible")
+                model.policy.load_state_dict(source.policy.state_dict(), strict=True)
+                model.warm_start_from = str(Path(args.warm_start).resolve())
         if args.resume:
             require_checkpoint(model, previous)
         model.diablo_contract_sha256 = contract["sha256"]
@@ -211,16 +315,25 @@ def train(args):
         resolved = {
             "environment": asdict(config),
             "environment_class": task_class,
+            "config_class": config_class,
             "contract": contract,
             "ppo": settings,
-            "model": metadata(env.venv.envs[0].model),
+            "model": metadata(contract_env.model),
             "upstream_commit": lock["commit"],
             "versions": versions(),
             "requested_timesteps": args.steps,
             "n_envs": args.n_envs,
+            "vec_env": resolved_vec_env,
+            "vec_env_requested": args.vec_env,
+            "subproc_start_method": args.subproc_start_method,
             "seed": model.seed,
             "device": str(model.device),
+            "cpu_threads": args.cpu_threads,
+            "gpu_memory_fraction": args.gpu_fraction,
             "resume": None if args.resume is None else str(Path(args.resume).resolve()),
+            "warm_start": (
+                None if args.warm_start is None else str(Path(args.warm_start).resolve())
+            ),
             "parameter_sha256_before": before,
         }
         write_json(out / "resolved.json", resolved)
@@ -242,6 +355,9 @@ def train(args):
             "parameters_changed": before != after,
             "parameter_sha256_after": after,
             "policy": "policy.zip",
+            "warm_start": (
+                None if args.warm_start is None else str(Path(args.warm_start).resolve())
+            ),
             "scope": "PPO training completed; evaluate locomotion separately",
         }
         write_json(out / "result.json", result)
@@ -259,6 +375,7 @@ def train(args):
         )
         raise
     finally:
+        contract_env.close()
         env.close()
 
 
@@ -274,12 +391,19 @@ def configuration_path(path):
 
 def load_policy(path):
     from stable_baselines3 import PPO
-    from .env import Config
-    from .contract import environment_class, require_compatible, require_checkpoint
+    from .contract import (
+        environment_class,
+        import_class,
+        require_compatible,
+        require_checkpoint,
+    )
 
     path = Path(path).resolve()
     resolved = json.loads(configuration_path(path).read_text())
-    config = Config(**resolved["environment"])
+    config_class = import_class(
+        resolved.get("config_class", "diablo_training.env:Config")
+    )
+    config = config_class(**resolved["environment"])
     env = environment_class(
         resolved.get("environment_class", "diablo_training.env:DiabloEnv")
     )(config)
@@ -479,16 +603,81 @@ def main():
         command.add_argument("--seed", type=int, default=42)
         command.add_argument("--output", type=Path)
         if name == "train":
-            command.add_argument("--n-envs", type=int, default=4)
+            command.add_argument("--n-envs", type=int, default=16)
             command.add_argument("--max-speed", type=float)
             command.add_argument("--noise", action="store_true")
-            command.add_argument("--device", default="cpu")
+            command.add_argument(
+                "--device",
+                default="auto",
+                help="auto, cpu, cuda, or a CUDA index such as cuda:3",
+            )
+            command.add_argument(
+                "--vec-env",
+                choices=("auto", "dummy", "subproc"),
+                default="auto",
+                help="auto uses one process per environment on Linux",
+            )
+            command.add_argument(
+                "--subproc-start-method",
+                choices=("fork", "forkserver", "spawn"),
+                default="forkserver",
+            )
+            command.add_argument("--cpu-threads", type=int, default=1)
+            command.add_argument(
+                "--gpu-fraction",
+                type=float,
+                default=0.50,
+                help="PyTorch CUDA allocator fraction in (0, 1]",
+            )
             command.add_argument("--resume", type=Path)
+            command.add_argument(
+                "--warm-start",
+                type=Path,
+                help="Load policy weights across a changed environment/reward",
+            )
             command.add_argument(
                 "--config",
                 type=Path,
                 help="JSON environment / PPO / environment_class settings",
             )
+    check = commands.add_parser(
+        "benchmark",
+        help="Compare dummy and subprocess MuJoCo collection throughput",
+    )
+    check.add_argument("--n-envs", type=int, default=16)
+    check.add_argument("--steps", type=int, default=200)
+    check.add_argument("--warmup-steps", type=int, default=20)
+    check.add_argument("--seed", type=int, default=42)
+    check.add_argument("--output", type=Path)
+    check.add_argument(
+        "--vec-env", choices=("auto", "dummy", "subproc"), default="subproc"
+    )
+    check.add_argument(
+        "--subproc-start-method",
+        choices=("fork", "forkserver", "spawn"),
+        default="forkserver",
+    )
+    check = commands.add_parser(
+        "select-best",
+        help="Evaluate checkpoints and copy the best one",
+    )
+    check.add_argument("--run", type=Path, required=True)
+    check.add_argument("--output", type=Path)
+    check.add_argument("--seed", type=int, default=2001)
+    check.add_argument(
+        "--stages",
+        nargs="+",
+        choices=("stand", "forward", "backward", "turn", "start_stop"),
+        default=(
+            "stand",
+            "forward",
+            "backward",
+            "turn",
+            "start_stop",
+        ),
+    )
+    check.add_argument("--min-success", type=float, default=1.0)
+    check.add_argument("--strict", action="store_true")
     check = commands.add_parser("evaluate", aliases=["play"])
     check.add_argument("--model", type=Path, required=True)
     check.add_argument("--output", type=Path)
@@ -502,12 +691,22 @@ def main():
     args = parser.parse_args()
     if hasattr(args, "steps") and args.steps <= 0:
         parser.error("--steps must be positive")
-    if hasattr(args, "n_envs") and not 1 <= args.n_envs <= 64:
-        parser.error("--n-envs must be 1..64")
+    if hasattr(args, "n_envs") and not 1 <= args.n_envs <= 256:
+        parser.error("--n-envs must be 1..256")
+    if hasattr(args, "warmup_steps") and args.warmup_steps < 0:
+        parser.error("--warmup-steps must be non-negative")
+    if hasattr(args, "cpu_threads") and args.cpu_threads <= 0:
+        parser.error("--cpu-threads must be positive")
+    if hasattr(args, "gpu_fraction") and not 0 < args.gpu_fraction <= 1:
+        parser.error("--gpu-fraction must be in (0, 1]")
+    if hasattr(args, "min_success") and not 0 <= args.min_success <= 1:
+        parser.error("--min-success must be in [0, 1]")
     functions = {
         "fetch": lambda _: fetch(),
         "doctor": doctor,
         "smoke": smoke,
+        "benchmark": benchmark,
+        "select-best": select_best,
         "train": train,
         "evaluate": evaluate,
         "play": evaluate,

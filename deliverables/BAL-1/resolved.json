@@ -1,0 +1,151 @@
+{
+  "environment": {
+    "episode_seconds": 20.0,
+    "max_speed": 1.0,
+    "observation_noise": true,
+    "action_mode": "wheel_torque",
+    "max_backward_speed": 0.8,
+    "max_yaw_rate": 1.5,
+    "min_height": 0.23,
+    "max_height": 0.27,
+    "command_duration_min": 2.0,
+    "command_duration_max": 6.0,
+    "command_ramp_seconds": 0.35
+  },
+  "environment_class": "diablo_training.xingtian_env:XingtianFlatEnv",
+  "config_class": "diablo_training.xingtian_env:XingtianConfig",
+  "contract": {
+    "interface_version": 2,
+    "implementation_sha256": {
+      "model.py": "7ed570d601d9a9c5b2ab990fc1530ecf2c943820051b8b88aa1870cf7a2f2564",
+      "control.py": "4ca0dcd3755c658f93f67ab14fa7cd43d7c8397926ee6583431286e25421569f",
+      "env.py": "80c6960b1bdbf07367b428dcb5eb6da33c4aee309f77be2c871a070bb201da80",
+      "task_module": "d838155185b61a215dcd79ba44da76a8da1eab0f1b0640f549a2813aa0e6d15a",
+      "xingtian.py": "7bff9ae57b70fe9a3b0eaa9dd8b1e6b0c4f8d38169f9160fcae4c18f5127d431",
+      "xingtian_env.py": "d838155185b61a215dcd79ba44da76a8da1eab0f1b0640f549a2813aa0e6d15a",
+      "xingtian_terrain.py": "5297c6a777a56dcafa96331dd9e144c63b349390399805d55d2772febac4a4c2"
+    },
+    "mujoco_version": "3.8.1",
+    "model": {
+      "source": "resources/robots/diablo/urdf/diablo.urdf",
+      "source_sha256": "cdcaa7720a660bddfe9c2dd238a3c3fe91adccdc3255c5b8491d77344bf62116",
+      "upstream_commit": "590085a027fc9e20b1d7e976714cd195488b96b6",
+      "mechanism_commit": "3c9abbcaeb93911932b9c14777c4e75cc8c1470e",
+      "mechanism_sha256": "91b63e318ace76132bb578c2dfdead9bff3920017647eeac975c67576ba28bc4",
+      "model_scope": "CAD reference with two explicit parallelogram closures; not hardware calibrated",
+      "joints": [
+        "left_hip_motor",
+        "left_knee_motor",
+        "left_wheel_motor",
+        "right_hip_motor",
+        "right_knee_motor",
+        "right_wheel_motor"
+      ],
+      "actuators": 6,
+      "closure_constraints": 2,
+      "default_joint_rad": [
+        0.5,
+        -1.0,
+        0.0,
+        0.5,
+        -1.0,
+        0.0
+      ],
+      "observation_velocity_signs": [
+        1.0,
+        1.0,
+        -1.0,
+        1.0,
+        1.0,
+        -1.0
+      ],
+      "mass_kg": 22.899506,
+      "physics_dt_s": 0.002,
+      "control_dt_s": 0.01,
+      "simulation_only": true,
+      "hardware_authorized": false,
+      "motor_reference": {
+        "source": "arXiv:2407.21500 Table II",
+        "stall_nm": 17.0,
+        "no_load_rad_s": 23.038346126325152,
+        "rated_nm": 9.6
+      },
+      "limits_scope": "Published reference motor, assumed linear torque-speed envelope; not firmware/thermal calibration"
+    },
+    "action_mode": "wheel_torque",
+    "observation": {
+      "shape": [
+        125
+      ],
+      "frames": 5,
+      "frame_width": 25,
+      "order": "oldest_to_current"
+    },
+    "sha256": "3e6fae2764110f1b621557329c2bf32e9a51520847c65d015dcbec7bac1bf81b"
+  },
+  "ppo": {
+    "n_steps": 64,
+    "batch_size": 256,
+    "n_epochs": 5,
+    "learning_rate": 0.0003,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "ent_coef": 0.0,
+    "policy_kwargs": {
+      "net_arch": [
+        256,
+        128
+      ]
+    }
+  },
+  "model": {
+    "source": "resources/robots/diablo/urdf/diablo.urdf",
+    "source_sha256": "cdcaa7720a660bddfe9c2dd238a3c3fe91adccdc3255c5b8491d77344bf62116",
+    "upstream_commit": "590085a027fc9e20b1d7e976714cd195488b96b6",
+    "mechanism_commit": "3c9abbcaeb93911932b9c14777c4e75cc8c1470e",
+    "mechanism_sha256": "91b63e318ace76132bb578c2dfdead9bff3920017647eeac975c67576ba28bc4",
+    "model_scope": "CAD reference with two explicit parallelogram closures; not hardware calibrated",
+    "joints": [
+      "left_hip_motor",
+      "left_knee_motor",
+      "left_wheel_motor",
+      "right_hip_motor",
+      "right_knee_motor",
+      "right_wheel_motor"
+    ],
+    "actuators": 6,
+    "closure_constraints": 2,
+    "default_joint_rad": [
+      0.5,
+      -1.0,
+      0.0,
+      0.5,
+      -1.0,
+      0.0
+    ],
+    "observation_velocity_signs": [
+      1.0,
+      1.0,
+      -1.0,
+      1.0,
+      1.0,
+      -1.0
+    ],
+    "mass_kg": 22.899506,
+    "physics_dt_s": 0.002,
+    "control_dt_s": 0.01,
+    "simulation_only": true,
+    "hardware_authorized": false,
+    "motor_reference": {
+      "source": "arXiv:2407.21500 Table II",
+      "stall_nm": 17.0,
+      "no_load_rad_s": 23.038346126325152,
+      "rated_nm": 9.6
+    },
+    "limits_scope": "Published reference motor, assumed linear torque-speed envelope; not firmware/thermal calibration"
+  },
+  "seed": 0,
+  "device": "cpu",
+  "source_policy": "runs/distill_wt3/policy.zip",
+  "note": "policy adopted from behavior-cloning distillation, not diablo train"
+}

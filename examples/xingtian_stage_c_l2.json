@@ -1,0 +1,30 @@
+{
+  "environment_class": "diablo_training.xingtian_env:XingtianStageEnv",
+  "config_class": "diablo_training.xingtian_env:XingtianStageConfig",
+  "environment": {
+    "stage": "C",
+    "terrain_level": 1,
+    "terrain_seed": 2201,
+    "track_length_m": 30.0,
+    "track_width_m": 6.0,
+    "obstacle_height_m": 0.03,
+    "max_speed": 0.5,
+    "max_backward_speed": 0.4,
+    "max_yaw_rate": 0.8,
+    "min_height": 0.16,
+    "max_height": 0.34,
+    "episode_seconds": 40.0,
+    "observation_noise": true,
+    "action_mode": "position_velocity"
+  },
+  "ppo": {
+    "n_steps": 64,
+    "batch_size": 256,
+    "n_epochs": 5,
+    "learning_rate": 0.0005,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "ent_coef": 0.008,
+    "policy_kwargs": {"net_arch": [128, 64]}
+  }
+}

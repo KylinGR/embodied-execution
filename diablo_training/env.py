@@ -36,7 +36,7 @@ class Config:
             raise ValueError(
                 "Episode duration and command speed must be finite and positive"
             )
-        if self.action_mode not in ("position_velocity", "torque"):
+        if self.action_mode not in ("position_velocity", "torque", "wheel_torque"):
             raise ValueError("Unknown action_mode")
 
 
@@ -62,13 +62,16 @@ class DiabloEnv(gym.Env):
         self.render_mode = render_mode
         if render_mode not in (None, "rgb_array"):
             raise ValueError("render_mode must be None or rgb_array")
-        self.model = make_model()
+        self.model = self._make_model()
         self.data = mujoco.MjData(self.model)
         joints = [self.model.joint(n).id for n in JOINTS]
         self.qi = self.model.jnt_qposadr[joints]
         self.vi = self.model.jnt_dofadr[joints]
         self.base_id = self.model.body("diablo_base_link").id
-        self.floor_id = self.model.geom("floor").id
+        self.floor_id = next(
+            (i for i in range(self.model.ngeom) if self.model.geom(i).name == "floor"),
+            -1,
+        )
         self.action_space = spaces.Box(-1.0, 1.0, shape=(6,), dtype=np.float32)
         self.observation_space = spaces.Box(
             -100.0, 100.0, shape=(125,), dtype=np.float32
@@ -86,6 +89,16 @@ class DiabloEnv(gym.Env):
         self.stop_origin = None
         self.command = np.zeros(3)
         self._needs_reset, self._closed, self._faulted = True, False, False
+
+    def _make_model(self):
+        return make_model()
+
+    def _sample_start_xy(self):
+        return 0.0, 0.0
+
+    def ground_height(self, x, y):
+        del x, y
+        return 0.0
 
     def _body_velocity(self):
         velocity = np.zeros(6)
@@ -115,7 +128,7 @@ class DiabloEnv(gym.Env):
             (
                 gyro * 0.25,
                 self.gravity_estimate,
-                self.command * [10.0, 0.25, 5.0],
+                self.command * [10.0, 10.0, 5.0],
                 q,
                 dq * 0.05,
                 self.previous_action,
@@ -157,8 +170,11 @@ class DiabloEnv(gym.Env):
         )
         if not np.isfinite(self.speed) or abs(self.speed) > self.config.max_speed:
             raise ValueError("Requested speed is outside the configured command range")
-        self.data.qpos[2] = 0.4
-        self.data.qpos[3:7] = [1, 0, 0, 0]
+        free_qpos = self.model.jnt_qposadr[self.model.joint("floating_base").id]
+        start_x, start_y = self._sample_start_xy()
+        self.data.qpos[free_qpos : free_qpos + 2] = [start_x, start_y]
+        self.data.qpos[free_qpos + 2] = 0.4
+        self.data.qpos[free_qpos + 3 : free_qpos + 7] = [1, 0, 0, 0]
         set_pose(self.model, self.data, DEFAULT_Q)
         mujoco.mj_forward(self.model, self.data)
         wheel_geoms = [
@@ -176,7 +192,13 @@ class DiabloEnv(gym.Env):
                 support = radius * np.sqrt(
                     max(0.0, 1 - axis[2] ** 2)
                 ) + halfwidth * abs(axis[2])
-                bottoms.append(float(self.data.geom_xpos[i, 2] - support))
+                bottoms.append(
+                    (
+                        float(self.data.geom_xpos[i, 2] - support),
+                        float(self.data.geom_xpos[i, 0]),
+                        float(self.data.geom_xpos[i, 1]),
+                    )
+                )
             else:
                 mesh = self.model.geom_dataid[i]
                 first, count = (
@@ -188,9 +210,17 @@ class DiabloEnv(gym.Env):
                     vertices @ self.data.geom_xmat[i].reshape(3, 3).T
                     + self.data.geom_xpos[i]
                 )
-                bottoms.append(float(world[:, 2].min()))
-        bottom = min(bottoms)
-        self.data.qpos[2] += 0.005 - bottom
+                bottoms.append(
+                    (
+                        float(world[:, 2].min()),
+                        float(self.data.geom_xpos[i, 0]),
+                        float(self.data.geom_xpos[i, 1]),
+                    )
+                )
+        clearance = min(
+            bottom - self.ground_height(x, y) for bottom, x, y in bottoms
+        )
+        self.data.qpos[free_qpos + 2] += 0.005 - clearance
         mujoco.mj_forward(self.model, self.data)
         self.reference_height = float(self.data.xpos[self.base_id, 2])
         self.gravity_estimate[:] = [0, 0, -1]
@@ -200,8 +230,81 @@ class DiabloEnv(gym.Env):
         if self.command.shape != (3,) or not np.isfinite(self.command).all():
             self._fault("Custom task command must be finite [vx, yaw_rate, height]")
         self._needs_reset = False
+        self.pitch_integral = 0.0
         self.history[:] = self._frame()
         return self.history.flatten().copy(), {"task": self.task}
+
+    def _update_pitch_control(self):
+        """俯仰积分补偿：每个控制步算一次，子步循环里叠加到两个轮子上。
+
+        符号由开环标定：两轮同时加正力矩 → 俯仰角下降，故 kp/ki 取正。
+        """
+        import os
+
+        kp = float(os.environ.get("PITCH_KP", "0.15"))
+        kd = float(os.environ.get("PITCH_KD", "0.0"))
+        ki = float(os.environ.get("PITCH_KI", "0.03"))
+        clamp = float(os.environ.get("PITCH_CLAMP", "4.0"))
+        i_limit = float(os.environ.get("PITCH_I_LIMIT", "20.0"))
+
+        gate_vx = float(os.environ.get("PITCH_GATE_VX", "0.05"))
+        if abs(float(self.command[0])) >= gate_vx:
+            # 在行驶：前倾是加速手段，不能补偿；积分冻结
+            self._pitch_bias = np.zeros(6)
+            return
+        rot = np.asarray(self.data.xmat[self.base_id]).reshape(3, 3)
+        pitch = float(np.degrees(np.arctan2(-rot[2, 0], rot[2, 2])))
+        rate = float(self.data.sensor("gyro").data[1]) * 57.29578
+
+        integral = float(getattr(self, "pitch_integral", 0.0))
+        integral = float(np.clip(integral + pitch * CONTROL_DT, -i_limit, i_limit))
+        self.pitch_integral = integral
+
+        comp = kp * pitch + kd * rate + ki * integral
+        comp = float(np.clip(comp, -clamp, clamp))
+
+        bias = np.zeros(6)
+        bias[2] = comp
+        bias[5] = comp
+        self._pitch_bias = bias
+
+    def _apply_control(self, applied):
+        """LEG_MODE=pd 时腿由 PD 固定、轮子完全交给解析控制器。"""
+        import os
+
+        if os.environ.get("LEG_MODE", "policy") != "pd":
+            return applied
+
+        out = np.array(applied, dtype=float, copy=True)
+        q = self.data.qpos[self.qi]
+        dq = self.data.qvel[self.vi]
+        for j in (0, 1, 3, 4):
+            out[j] = 60.0 * (DEFAULT_Q[j] - q[j]) - 2.0 * dq[j]
+        out[2] = 0.0
+        out[5] = 0.0
+        return out
+
+    def _update_balance_control(self):
+        """解析平衡/速度/航向控制器，BALANCE_MODE=analytic 时生效。"""
+        import os
+
+        from . import balance
+
+        if os.environ.get("BALANCE_MODE", "none") != "analytic":
+            self._balance_bias = np.zeros(6)
+            return
+
+        if getattr(self, "_bal_state", None) is None or getattr(self, "steps", 0) == 0:
+            self._bal_state = balance.make_state(self.data, self.base_id)
+
+        self._balance_bias = balance.compute(
+            self._bal_state,
+            self.data,
+            self.model,
+            self.base_id,
+            self.command,
+            CONTROL_DT,
+        )
 
     def step(self, action):
         if self._needs_reset or self._closed or self._faulted:
@@ -215,11 +318,12 @@ class DiabloEnv(gym.Env):
         command = self.command.copy()
         saturated = 0
         max_torque = 0.0
+        self._update_balance_control()
         for _ in range(round(CONTROL_DT / PHYSICS_DT)):
             q, dq = self.data.qpos[self.qi], self.data.qvel[self.vi]
             requested, applied = decode_action(action, q, dq, self.config.action_mode)
             saturated += int(np.count_nonzero(np.abs(requested - applied) > 1e-9))
-            self.data.ctrl[:] = applied
+            self.data.ctrl[:] = self._apply_control(applied) + self._balance_bias
             max_torque = max(max_torque, float(np.max(np.abs(self.data.ctrl))))
             mujoco.mj_step(self.model, self.data)
             for warning in (
@@ -245,11 +349,10 @@ class DiabloEnv(gym.Env):
         upright = float(rotation[2, 2])
         body_contact = False
         for contact in self.data.contact:
-            if self.floor_id in (contact.geom1, contact.geom2):
-                other = (
-                    contact.geom2 if contact.geom1 == self.floor_id else contact.geom1
-                )
-                body_contact |= self.model.geom_bodyid[other] == self.base_id
+            body1 = int(self.model.geom_bodyid[contact.geom1])
+            body2 = int(self.model.geom_bodyid[contact.geom2])
+            if self.base_id in (body1, body2) and 0 in (body1, body2):
+                body_contact = True
         terminated = bool(upright < 0.5 or body_contact)
         truncated = self.steps * CONTROL_DT >= self.config.episode_seconds
         error = float(velocity[0] - command[0])

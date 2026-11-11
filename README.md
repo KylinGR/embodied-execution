@@ -1,6 +1,6 @@
 # 具身执行 · Embodied Execution
 
-面向团队的 **DIABLO 双轮足机器人 MuJoCo 运动训练环境**。提供公开机构模型适配、Gymnasium环境、训练/续训、评估、可视化和ONNX/TorchScript导出。默认CPU，无需Isaac Gym、ROS或机器人硬件。你可以自行定义任务、奖励和训练策略。
+面向团队的 **DIABLO 双轮足机器人 MuJoCo 运动训练环境**。提供公开机构模型适配、Gymnasium环境、训练/续训、评估、可视化和ONNX/TorchScript导出。物理默认使用CPU MuJoCo，策略会自动选择CUDA（若可用），无需Isaac Gym、ROS或机器人硬件。你可以自行定义任务、奖励和训练策略。
 
 ![MuJoCo中的DIABLO模型初始姿态](docs/images/diablo-mujoco.png)
 
@@ -24,6 +24,10 @@ diablo doctor
 # 首轮短训练，只确认工具链
 diablo train --steps 2048 --n-envs 4 --output runs/first-train
 
+# Linux上并行采集MuJoCo物理，并在GPU上更新PPO
+diablo train --device auto --n-envs 16 --vec-env subproc \
+  --steps 2000000 --output runs/parallel-train
+
 # 每个任务运行首个回合；跌倒保留证据，退出码2
 diablo evaluate --model runs/first-train/policy.zip --output runs/first-evaluate
 
@@ -33,6 +37,9 @@ diablo export --model runs/first-train/policy.zip \
 ```
 
 每次输出目录必须是新的。默认平地任务为平衡、单次起停、变速、重复起停。当前不提供越野、跳跃、爬行课程或硬件部署；这些需要另写任务和对应评测。
+
+`diablo train --warm-start <policy.zip>` 可在观测/动作语义不变的任务之间只加载策略权重；
+`diablo select-best --run <run-dir>` 会用固定开发指令评测 checkpoint 并输出 `selection/policy-best.zip`。
 
 ## 自己定训练策略
 
@@ -50,6 +57,9 @@ diablo train --config examples/custom.json --steps 2048 --output runs/custom-tra
 ## 教程与资源
 
 - [安装、训练、回放、续训、看曲线、自定义与排错](docs/tutorial.md)
+- [MuJoCo并行、CUDA与GPU原生物理路线](docs/performance.md)
+- [在Git分支中开发刑天训练能力](docs/xingtian-development.md)
+- [A/B/C/D基础运动课程、warm-start与最佳权重选择](docs/curriculum.md)
 - [模型来源、机构、电机映射、输入输出和时序](docs/model-interface.md)
 - [官方资源、开源策略与SDK边界](docs/resources.md)
 - [许可证与资源再分发边界](THIRD_PARTY.md)

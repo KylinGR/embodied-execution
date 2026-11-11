@@ -13,12 +13,19 @@ from .model import metadata
 
 
 def environment_class(name="diablo_training.env:DiabloEnv"):
+    cls = import_class(name)
+    if not issubclass(cls, DiabloEnv):
+        raise TypeError("Environment class must inherit DiabloEnv")
+    return cls
+
+
+def import_class(name):
     module, separator, attribute = name.partition(":")
     if not separator:
-        raise ValueError("Environment class must be module:Class")
+        raise ValueError("Class path must be module:Class")
     cls = getattr(importlib.import_module(module), attribute)
-    if not isinstance(cls, type) or not issubclass(cls, DiabloEnv):
-        raise TypeError("Environment class must inherit DiabloEnv")
+    if not isinstance(cls, type):
+        raise TypeError("Import target must be a class")
     return cls
 
 
@@ -31,6 +38,11 @@ def policy_contract(env):
     implementation["task_module"] = hashlib.sha256(
         Path(inspect.getsourcefile(type(env))).read_bytes()
     ).hexdigest()
+    if type(env).__module__.startswith("diablo_training.xingtian"):
+        for filename in ("xingtian.py", "xingtian_env.py", "xingtian_terrain.py"):
+            implementation[filename] = hashlib.sha256(
+                Path(__file__).with_name(filename).read_bytes()
+            ).hexdigest()
     content = {
         "interface_version": 2,
         "implementation_sha256": implementation,

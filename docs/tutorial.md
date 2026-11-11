@@ -63,7 +63,7 @@ diablo smoke --steps 200 --output runs/my-smoke
 diablo train --steps 2048 --n-envs 4 --output runs/first-train
 ```
 
-程序复用 Stable-Baselines3 PPO，默认 CPU、单个 PyTorch 计算线程。四个环境使用 MuJoCo CPU 物理；这不是 GPU 并行物理训练。
+程序复用 Stable-Baselines3 PPO。默认 `--device auto`：物理仍由 MuJoCo 在 CPU 计算，PPO 在 CUDA 可用时放到 GPU；Linux 上 `--vec-env auto` 会为多个环境启用 `SubprocVecEnv`。CUDA 只加速策略网络，不会把 MuJoCo 接触求解搬到 GPU。
 
 每个环境的 rollout 为128步，一次更新采集 `128 × n_envs` 个 transition。因此请求的步数会向完整 rollout 取整。`result.json` 同时记录请求步数、实际步数、耗时及策略参数是否改变。
 
@@ -139,6 +139,17 @@ diablo train --resume runs/first-train/policy.zip \
 ```bash
 diablo train --max-speed 0.2 --steps 200000 --n-envs 4 --output runs/foundation-low-speed
 ```
+
+正式训练前先测采样吞吐，并选择适合本机的环境数：
+
+```bash
+diablo benchmark --vec-env subproc --n-envs 8 --steps 200
+diablo benchmark --vec-env subproc --n-envs 16 --steps 200
+diablo train --device cuda:0 --vec-env subproc --n-envs 16 \
+  --gpu-fraction 0.5 --steps 2000000 --output runs/foundation-parallel
+```
+
+如果 CUDA 可用但 GPU 利用率仍很低，这是正常的：瓶颈在 MuJoCo CPU 物理。需要 GPU 原生物理时，参见[性能路线](performance.md)。
 
 `--noise` 只加入小幅陀螺仪和编码器速度噪声，不代表完整动力学随机化或 sim2real 验证。默认速度上限0.5 m/s，可以通过配置自行改变；改变速度范围并不保证策略会完成任务。复杂地形、跳跃和传感器扩展应先开发对应环境与评测。
 
