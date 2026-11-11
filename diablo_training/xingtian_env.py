@@ -159,7 +159,9 @@ class XingtianFlatEnv(DiabloEnv):
         )
         wheel_speed = qvel[[2, 5]] * OBSERVATION_SIGNS[[2, 5]]
         transition["wheel_velocity"] = wheel_speed * 0.1
-        half_track = 0.18755
+        # 轮心距的一半（482.5 mm / 2）。实测外缘跨度 528 mm − 轮宽 50 mm ≈ 478 mm，
+        # MuJoCo 正运动学 482.5 mm，两者差 0.9%。原值 0.18755 是髋关节间距，偏小 22.3%。
+        half_track = 0.24125
         transition["wheel_linear_velocity"] = np.array(
             [
                 transition["velocity"][0] - half_track * transition["gyro"][2],

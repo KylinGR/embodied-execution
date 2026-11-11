@@ -45,10 +45,12 @@ def walk(a, b, path, out):
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    argv = [a for a in sys.argv[1:] if not a.startswith("--")]
+    ignore_missing = "--ignore-missing" in sys.argv
+    if len(argv) != 2:
         print(__doc__)
         return 2
-    pa, pb = Path(sys.argv[1]), Path(sys.argv[2])
+    pa, pb = Path(argv[0]), Path(argv[1])
     ja = json.loads(pa.read_text(encoding="utf-8"))
     jb = json.loads(pb.read_text(encoding="utf-8"))
 
@@ -57,6 +59,9 @@ def main() -> int:
 
     # 阈值/剖面定义也一并比，防止"指标一样但判据被改"
     walk(ja.get("thresholds"), jb.get("thresholds"), "thresholds", bad)
+
+    if ignore_missing:
+        bad = [item for item in bad if "缺失" not in str(item[1])]
 
     rows = len(ja.get("rows", []))
     if not bad:

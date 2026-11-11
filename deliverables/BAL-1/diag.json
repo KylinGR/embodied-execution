@@ -1,7 +1,7 @@
 {
   "version": "diag-5",
-  "model": "runs/distill_wt3/policy.zip",
-  "resolved": "examples/xingtian_balance_student_wt.json",
+  "model": "runs/BAL-1/checkpoints/policy.zip",
+  "resolved": "runs/BAL-1/resolved.json",
   "seeds": [
     2002,
     2003,
@@ -19,7 +19,7 @@
   ],
   "ramp_s": 0.0,
   "wheel_radius": 0.1,
-  "wall_seconds": 137.8085876660043,
+  "wall_seconds": 135.07707466196734,
   "thresholds": {
     "common": {
       "min_upright": 0.9,
@@ -76,6 +76,22 @@
     },
     "accel": {
       "speed_rel_err": 0.1
+    },
+    "forward_fast_08": {
+      "speed_rel_err": 0.08,
+      "distance_ratio": 0.9,
+      "lateral_drift_m": 0.08,
+      "heading_deg": 3.0,
+      "rise_time_s": 0.8,
+      "overshoot": 0.1
+    },
+    "forward_fast_10": {
+      "speed_rel_err": 0.08,
+      "distance_ratio": 0.9,
+      "lateral_drift_m": 0.08,
+      "heading_deg": 3.0,
+      "rise_time_s": 0.8,
+      "overshoot": 0.1
     },
     "height": {
       "ripple_m": 0.04,
