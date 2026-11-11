@@ -428,8 +428,10 @@
         "yaw_overspeed": 1.0,
         "yaw_underspeed_cost": 0.8,
         "turn_angle_cost": 0.7,
-        "s_turn_path": 0.8,
-        "turn_wheel_alignment": 0.4,
+        "profile_completion": 6.0,
+        "quality_completion": 20.0,
+        "s_turn_path": 1.0,
+        "turn_wheel_alignment": 0.5,
         "leg_symmetry": 0.2,
         "straight_heading": 0.8,
         "cross_track": 0.5,
@@ -439,9 +441,9 @@
         "wheel_chatter": 1.0,
         "wheel_common_residual": 0.2,
         "height": 0.9,
-        "upright": 1.2,
-        "pitch": 0.8,
-        "roll": 0.9,
+        "upright": 1.4,
+        "pitch": 1.0,
+        "roll": 1.0,
         "stationary": 0.5,
         "drift": 0.8,
         "zero_speed": 1.2,
@@ -495,9 +497,9 @@
         "drift_tolerance_m": 0.04,
         "wheel_sync_tolerance_mps": 0.15
       },
-      "overrides": {"action_rate": 0.055, "wheel_alignment": 0.8, "wheel_sync": 0.5, "lateral": 0.7, "fall": 30.0},
-      "ppo": {"learning_rate": 0.00005, "n_epochs": 3, "target_kl": 0.005, "ent_coef": 0.002},
-      "control": {"wheel_speed_loop": "pi", "wheel_speed_target_max_rad_s": 14.0, "wheel_speed_kp": 0.3, "wheel_speed_ki": 4.0, "wheel_integral_limit_nm": 2.0, "wheel_feedforward_nm_per_rad_s": 0.05, "wheel_target_slew_rad_s2": 18.0, "wheel_velocity_feedforward_gain": 1.0, "wheel_yaw_feedforward_gain": 1.0, "wheel_half_track_m": 0.24125, "wheel_common_residual_limit_fraction": 0.35, "standing_wheel_target_cap_rad_s": 0.2, "zero_wheel_after_hold_s": 0.5}
+      "overrides": {"action_rate": 0.06, "wheel_alignment": 0.8, "wheel_sync": 0.5, "lateral": 0.7, "fall": 80.0},
+      "ppo": {"learning_rate": 0.00001, "n_epochs": 3, "target_kl": 0.004, "ent_coef": 0.0005, "gamma":0.995, "gae_lambda":0.97},
+      "control": {"wheel_speed_loop": "pi", "wheel_speed_target_max_rad_s": 14.0, "wheel_speed_kp": 0.3, "wheel_speed_ki": 4.0, "wheel_integral_limit_nm": 2.0, "wheel_feedforward_nm_per_rad_s": 0.05, "wheel_target_slew_rad_s2": 18.0, "wheel_velocity_feedforward_gain": 1.0, "wheel_yaw_feedforward_gain": 1.0, "wheel_half_track_m": 0.24125, "wheel_common_residual_limit_fraction": 0.2, "standing_wheel_target_cap_rad_s": 0.2, "zero_wheel_after_hold_s": 0.5}
     },
     "flat_turn_in_place_120": {
       "budget": 8000000,
@@ -596,7 +598,7 @@
       },
       "overrides": {"action_rate": 0.055, "wheel_alignment": 0.8, "wheel_sync": 0.5, "lateral": 0.4, "fall": 30.0},
       "ppo": {"learning_rate": 0.00012, "n_epochs": 4, "target_kl": 0.018, "ent_coef": 0.002},
-      "control": {"wheel_speed_loop": "pi", "wheel_speed_target_max_rad_s": 8.0, "wheel_speed_kp": 0.3, "wheel_speed_ki": 4.0, "wheel_integral_limit_nm": 2.0, "wheel_feedforward_nm_per_rad_s": 0.05, "wheel_target_slew_rad_s2": 18.0, "wheel_velocity_feedforward_gain": 1.0, "wheel_yaw_feedforward_gain": 1.0, "wheel_half_track_m": 0.24125, "wheel_common_residual_limit_fraction": 0.2, "standing_wheel_target_cap_rad_s": 0.2, "zero_wheel_after_hold_s": 0.5}
+      "control": {"wheel_speed_loop": "pi", "wheel_speed_target_max_rad_s": 8.0, "wheel_speed_kp": 0.3, "wheel_speed_ki": 4.0, "wheel_integral_limit_nm": 2.0, "wheel_feedforward_nm_per_rad_s": 0.05, "wheel_target_slew_rad_s2": 18.0, "wheel_velocity_feedforward_gain": 1.0, "wheel_yaw_feedforward_gain": 1.0, "wheel_half_track_m": 0.24125, "wheel_common_residual_limit_fraction": 0.4, "standing_wheel_target_cap_rad_s": 0.2, "zero_wheel_after_hold_s": 0.5}
     },
     "flat_turn_moving_120": {
       "budget": 10000000,

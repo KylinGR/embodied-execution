@@ -1065,9 +1065,12 @@ class ContractTests(unittest.TestCase):
                 0.0,
             )
             self.assertEqual(stage["reward_weights"]["leg_symmetry"], 0.2)
+            expected_turn_alignment = (
+                0.5 if name == "flat_turn_moving_080" else 0.4
+            )
             self.assertEqual(
                 stage["reward_weights"]["turn_wheel_alignment"],
-                0.4,
+                expected_turn_alignment,
             )
             self.assertEqual(
                 stage["reward_weights"]["wheel_common_residual"],

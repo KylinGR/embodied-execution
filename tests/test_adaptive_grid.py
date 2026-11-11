@@ -436,6 +436,15 @@ class AdaptiveGridTests(unittest.TestCase):
             ),
             0.2,
         )
+        moving_stage = course.stage("flat_turn_moving_080")
+        self.assertEqual(moving_stage["reward_weights"]["s_turn_path"], 1.0)
+        self.assertEqual(
+            moving_stage["reward_weights"]["profile_completion"], 6.0
+        )
+        self.assertEqual(
+            moving_stage["reward_weights"]["quality_completion"], 20.0
+        )
+        self.assertEqual(moving_stage["overrides"]["fall"], 80.0)
         for stage in course.stages.values():
             self.assertAlmostEqual(
                 stage.get("control", {}).get("wheel_half_track_m", 0.24125),
